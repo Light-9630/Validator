@@ -45,11 +45,24 @@ session.mount("https://", adapter)
 def fetch_ads_txt(domain, use_https=True):
     scheme = "https" if use_https else "http"
     url = f"{scheme}://{domain}/ads.txt"
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/115.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Connection": "keep-alive"
+    }
+
     try:
         time.sleep(rate_limit_delay)  # Rate limiting
-        r = session.get(url, timeout=5)
+        r = session.get(url, headers=headers, timeout=5)
         r.raise_for_status()
         return r.text
+
     except requests.exceptions.Timeout:
         if use_https:
             return fetch_ads_txt(domain, use_https=False)
@@ -65,11 +78,18 @@ def fetch_ads_txt(domain, use_https=True):
             return fetch_ads_txt(domain, use_https=False)
         else:
             raise Exception("Connection Failed")
+    except requests.exceptions.HTTPError as e:
+        # Agar HTTPS pe 403 aaye toh HTTP try kare
+        if use_https:
+            return fetch_ads_txt(domain, use_https=False)
+        else:
+            raise Exception(f"HTTP Error: {e}")
     except Exception as e:
         if use_https:
             return fetch_ads_txt(domain, use_https=False)
         else:
             raise e
+
 
 def check_ads_txt(domain, entries_to_check):
     try:
@@ -141,4 +161,5 @@ if st.button("🚀 Run Checker"):
         )
 
         st.success(f"✅ Done! Time taken: {datetime.now() - start_time}")
+
 
