@@ -3,13 +3,15 @@ import pandas as pd
 import requests
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-import io
+import io, time
+from requests.adapters import HTTPAdapter, Retry
 
 st.set_page_config(page_title="Ads.txt Checker", layout="wide")
 st.title("📄 Ads.txt Bulk Checker")
 
 # === SETTINGS ===
 threads = st.number_input("Number of threads", min_value=1, max_value=100, value=20)
+rate_limit_delay = st.number_input("Delay between requests (seconds)", min_value=0.0, max_value=5.0, value=0.2)
 
 # ===== INPUT METHODS =====
 st.subheader("1️⃣ Domains List")
@@ -33,18 +35,41 @@ def strip_quotes(s):
         return s[1:-1]
     return s
 
+# Create a session with retry logic
+session = requests.Session()
+retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504, 429])
+adapter = HTTPAdapter(max_retries=retries)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+
 def fetch_ads_txt(domain, use_https=True):
     scheme = "https" if use_https else "http"
     url = f"{scheme}://{domain}/ads.txt"
     try:
-        r = requests.get(url, timeout=5)
+        time.sleep(rate_limit_delay)  # Rate limiting
+        r = session.get(url, timeout=5)
         r.raise_for_status()
         return r.text
-    except Exception:
+    except requests.exceptions.Timeout:
         if use_https:
             return fetch_ads_txt(domain, use_https=False)
         else:
-            raise
+            raise Exception("Timeout")
+    except requests.exceptions.SSLError:
+        if use_https:
+            return fetch_ads_txt(domain, use_https=False)
+        else:
+            raise Exception("SSL Error")
+    except requests.exceptions.ConnectionError:
+        if use_https:
+            return fetch_ads_txt(domain, use_https=False)
+        else:
+            raise Exception("Connection Failed")
+    except Exception as e:
+        if use_https:
+            return fetch_ads_txt(domain, use_https=False)
+        else:
+            raise e
 
 def check_ads_txt(domain, entries_to_check):
     try:
