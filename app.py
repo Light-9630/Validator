@@ -76,7 +76,7 @@ def check_ads_txt(domain, entries_to_check):
         ads_content = fetch_ads_txt(domain)
 
         ads_lines_with_space = [
-            line.strip().lower()
+            line.strip()
             for line in ads_content.splitlines()
             if line.strip() and not line.strip().startswith("#")
         ]
@@ -84,7 +84,7 @@ def check_ads_txt(domain, entries_to_check):
 
         result = {"domain": domain}
         for entry in entries_to_check:
-            entry_with_space = entry.strip().lower()
+            entry_with_space = entry.strip()
             entry_no_space = entry_with_space.replace(" ", "")
 
             match_found = (
@@ -117,9 +117,9 @@ if st.button("🚀 Run Checker"):
 
         # Load ads.txt entries
         if lines_file:
-            entries_to_check = [strip_quotes(e).replace("\xa0", " ").lower() for e in read_lines_from_file(lines_file)]
+            entries_to_check = [strip_quotes(e).replace("\xa0", " ") for e in read_lines_from_file(lines_file)]
         else:
-            entries_to_check = [strip_quotes(e).replace("\xa0", " ").lower() for e in read_lines_from_textarea(lines_paste)]
+            entries_to_check = [strip_quotes(e).replace("\xa0", " ") for e in read_lines_from_textarea(lines_paste)]
 
         with st.spinner("⏳ Checking domains... Please wait."):
             with ThreadPoolExecutor(max_workers=threads) as executor:
@@ -141,3 +141,4 @@ if st.button("🚀 Run Checker"):
         )
 
         st.success(f"✅ Done! Time taken: {datetime.now() - start_time}")
+
