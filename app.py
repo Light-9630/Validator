@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
-import random
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import io, time
 from requests.adapters import HTTPAdapter, Retry
@@ -11,19 +10,8 @@ st.set_page_config(page_title="Ads.txt Checker", layout="wide")
 st.title("📄 Ads.txt Bulk Checker")
 
 # === SETTINGS ===
-threads = st.number_input("Number of threads", min_value=1, max_value=100, value=20)
-rate_limit_delay = st.number_input("Delay between requests (seconds)", min_value=0.0, max_value=5.0, value=0.2)
-use_proxy = st.checkbox("Use Proxy (optional)")
-proxy_url = st.text_input("Proxy URL (http://user:pass@ip:port)", value="", disabled=not use_proxy)
-
-# ===== INPUT METHODS =====
-st.subheader("1️⃣ Domains List")
-domains_file = st.file_uploader("Upload domains.csv/txt (one domain per line)", type=["csv", "txt"])
-domains_paste = st.text_area("Or paste domains here (one per line)", height=150)
-
-st.subheader("2️⃣ Ads.txt Entries to Check")
-lines_file = st.file_uploader("Upload lines.csv/txt (entries to check)", type=["csv", "txt"])
-lines_paste = st.text_area("Or paste ads.txt entries here (one per line)", height=150)
+threads = st.number_input("⚙ Number of threads", min_value=1, max_value=100, value=20)
+rate_limit_delay = st.number_input("🐢 Delay between requests (seconds)", min_value=0.0, max_value=5.0, value=0.2)
 
 # ===== HELPER FUNCTIONS =====
 def read_lines_from_file(file):
@@ -38,41 +26,29 @@ def strip_quotes(s):
         return s[1:-1]
     return s
 
-# Multiple User-Agents for rotation
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
-]
-
-# Create a session with retry logic (including 403)
+# Create a session with retry logic + UA
 session = requests.Session()
-retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[403, 429, 500, 502, 503, 504])
+retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504, 429])
 adapter = HTTPAdapter(max_retries=retries)
 session.mount("http://", adapter)
 session.mount("https://", adapter)
 
-if use_proxy and proxy_url.strip():
-    session.proxies = {"http": proxy_url.strip(), "https": proxy_url.strip()}
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Connection": "keep-alive"
+}
 
 def fetch_ads_txt(domain, use_https=True):
     scheme = "https" if use_https else "http"
     url = f"{scheme}://{domain}/ads.txt"
-
-    headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Connection": "keep-alive"
-    }
-
     try:
-        time.sleep(rate_limit_delay + random.uniform(0, 0.3))  # Random delay to avoid detection
-        r = session.get(url, headers=headers, timeout=7)
+        time.sleep(rate_limit_delay)
+        r = session.get(url, headers=headers, timeout=5)
         r.raise_for_status()
         return r.text
-
     except requests.exceptions.Timeout:
         if use_https:
             return fetch_ads_txt(domain, use_https=False)
@@ -89,12 +65,6 @@ def fetch_ads_txt(domain, use_https=True):
         else:
             raise Exception("Connection Failed")
     except requests.exceptions.HTTPError as e:
-        if r.status_code == 403:
-            # Try again with another User-Agent
-            headers["User-Agent"] = random.choice(USER_AGENTS)
-            r2 = session.get(url, headers=headers, timeout=7)
-            if r2.status_code == 200:
-                return r2.text
         if use_https:
             return fetch_ads_txt(domain, use_https=False)
         else:
@@ -108,61 +78,95 @@ def fetch_ads_txt(domain, use_https=True):
 def check_ads_txt(domain, entries_to_check):
     try:
         ads_content = fetch_ads_txt(domain)
-
         ads_lines_with_space = [
             line.strip()
             for line in ads_content.splitlines()
             if line.strip() and not line.strip().startswith("#")
         ]
         ads_lines_no_space = [line.replace(" ", "") for line in ads_lines_with_space]
-
         result = {"domain": domain}
         for entry in entries_to_check:
             entry_with_space = entry.strip()
             entry_no_space = entry_with_space.replace(" ", "")
-
             match_found = (
                 any(line.startswith(entry_with_space) for line in ads_lines_with_space)
                 or any(line.startswith(entry_no_space) for line in ads_lines_no_space)
             )
-
             result[entry] = "YES" if match_found else "NO"
-
         return result
-
     except Exception as e:
-        result = {"domain": domain}
-        for entry in entries_to_check:
-            result[entry] = f"ERROR: {str(e)}"
-        return result
+        return {"domain": domain, **{entry: f"ERROR: {str(e)}" for entry in entries_to_check}}
+
+# ===== UI INPUTS =====
+tab1, tab2 = st.tabs(["🌐 Domains", "📜 Ads.txt Entries"])
+
+with tab1:
+    with st.expander("📂 Upload domains.csv/txt"):
+        domains_file = st.file_uploader("Upload Domains", type=["csv", "txt"])
+    with st.expander("✏ Paste domains"):
+        domains_paste = st.text_area("Paste domains here", height=150)
+
+with tab2:
+    with st.expander("📂 Upload entries.csv/txt"):
+        lines_file = st.file_uploader("Upload Ads.txt Entries", type=["csv", "txt"])
+    with st.expander("✏ Paste entries"):
+        lines_paste = st.text_area("Paste ads.txt entries here", height=150)
 
 # ===== RUN CHECKER =====
 if st.button("🚀 Run Checker"):
     if not (domains_file or domains_paste) or not (lines_file or lines_paste):
-        st.error("⚠ Please provide both Domains and Ads.txt entries (either upload or paste).")
+        st.error("⚠ Please provide both Domains and Ads.txt entries.")
     else:
         start_time = datetime.now()
 
-        # Load domains
+        # Load data
         if domains_file:
             domains = [strip_quotes(d).replace("\xa0", " ") for d in read_lines_from_file(domains_file)]
         else:
             domains = [strip_quotes(d).replace("\xa0", " ") for d in read_lines_from_textarea(domains_paste)]
 
-        # Load ads.txt entries
         if lines_file:
             entries_to_check = [strip_quotes(e).replace("\xa0", " ") for e in read_lines_from_file(lines_file)]
         else:
             entries_to_check = [strip_quotes(e).replace("\xa0", " ") for e in read_lines_from_textarea(lines_paste)]
 
-        with st.spinner("⏳ Checking domains... Please wait."):
-            with ThreadPoolExecutor(max_workers=threads) as executor:
-                results = list(executor.map(lambda d: check_ads_txt(d, entries_to_check), domains))
+        # Progress + results
+        results = []
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            futures = {executor.submit(check_ads_txt, d, entries_to_check): d for d in domains}
+            total = len(futures)
+            for i, future in enumerate(as_completed(futures)):
+                results.append(future.result())
+                progress_bar.progress((i + 1) / total)
+                status_text.text(f"✅ Checked {i+1}/{total} domains")
 
         df_results = pd.DataFrame(results)
 
-        # Show table
-        st.dataframe(df_results, use_container_width=True)
+        # Summary counts
+        yes_count = (df_results == "YES").sum().sum()
+        no_count = (df_results == "NO").sum().sum()
+        error_count = df_results.apply(lambda row: row.astype(str).str.startswith("ERROR").sum(), axis=1).sum()
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Domains", len(domains))
+        col2.metric("✅ YES", yes_count)
+        col3.metric("❌ NO", no_count)
+        col4.metric("⚠ Errors", error_count)
+
+        # Color the table
+        def color_cells(val):
+            if val == "YES":
+                return "background-color: #4CAF50; color: white;"
+            elif val == "NO":
+                return "background-color: #F44336; color: white;"
+            elif str(val).startswith("ERROR"):
+                return "background-color: #FF9800; color: white;"
+            return ""
+
+        st.dataframe(df_results.style.applymap(color_cells), use_container_width=True)
 
         # Download CSV
         output_csv = io.BytesIO()
