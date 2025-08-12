@@ -6,12 +6,19 @@ from datetime import datetime
 import io, time
 from requests.adapters import HTTPAdapter, Retry
 
-st.set_page_config(page_title="Ads.txt Checker", layout="wide")
-st.title("📄 Ads.txt Bulk Checker")
+# === PAGE CONFIG ===
+st.set_page_config(page_title="Ads.txt / App-Ads.txt Checker", layout="wide")
+st.title("📄 Ads.txt / App-Ads.txt Bulk Checker")
 
 # === SETTINGS ===
 threads = st.number_input("⚙ Number of threads", min_value=1, max_value=100, value=20)
 rate_limit_delay = st.number_input("🐢 Delay between requests (seconds)", min_value=0.0, max_value=5.0, value=0.2)
+check_type = st.radio(
+    "📄 File Type to Check",
+    options=["ads.txt", "app-ads.txt"],
+    index=0,
+    horizontal=True
+)
 
 # ===== HELPER FUNCTIONS =====
 def read_lines_from_file(file):
@@ -26,7 +33,7 @@ def strip_quotes(s):
         return s[1:-1]
     return s
 
-# Create a session with retry logic + UA
+# Create session with retry + UA
 session = requests.Session()
 retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504, 429])
 adapter = HTTPAdapter(max_retries=retries)
@@ -41,9 +48,10 @@ headers = {
     "Connection": "keep-alive"
 }
 
-def fetch_ads_txt(domain, use_https=True):
+# ===== FETCH FUNCTION =====
+def fetch_ads_txt(domain, filename="ads.txt", use_https=True):
     scheme = "https" if use_https else "http"
-    url = f"{scheme}://{domain}/ads.txt"
+    url = f"{scheme}://{domain}/{filename}"
     try:
         time.sleep(rate_limit_delay)
         r = session.get(url, headers=headers, timeout=5)
@@ -51,33 +59,34 @@ def fetch_ads_txt(domain, use_https=True):
         return r.text
     except requests.exceptions.Timeout:
         if use_https:
-            return fetch_ads_txt(domain, use_https=False)
+            return fetch_ads_txt(domain, filename, use_https=False)
         else:
             raise Exception("Timeout")
     except requests.exceptions.SSLError:
         if use_https:
-            return fetch_ads_txt(domain, use_https=False)
+            return fetch_ads_txt(domain, filename, use_https=False)
         else:
             raise Exception("SSL Error")
     except requests.exceptions.ConnectionError:
         if use_https:
-            return fetch_ads_txt(domain, use_https=False)
+            return fetch_ads_txt(domain, filename, use_https=False)
         else:
             raise Exception("Connection Failed")
     except requests.exceptions.HTTPError as e:
         if use_https:
-            return fetch_ads_txt(domain, use_https=False)
+            return fetch_ads_txt(domain, filename, use_https=False)
         else:
             raise Exception(f"HTTP Error: {e}")
     except Exception as e:
         if use_https:
-            return fetch_ads_txt(domain, use_https=False)
+            return fetch_ads_txt(domain, filename, use_https=False)
         else:
             raise e
 
-def check_ads_txt(domain, entries_to_check):
+# ===== CHECK FUNCTION =====
+def check_ads_txt(domain, entries_to_check, filename):
     try:
-        ads_content = fetch_ads_txt(domain)
+        ads_content = fetch_ads_txt(domain, filename)
         ads_lines_with_space = [
             line.strip()
             for line in ads_content.splitlines()
@@ -136,7 +145,7 @@ if st.button("🚀 Run Checker"):
         status_text = st.empty()
 
         with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures = {executor.submit(check_ads_txt, d, entries_to_check): d for d in domains}
+            futures = {executor.submit(check_ads_txt, d, entries_to_check, check_type): d for d in domains}
             total = len(futures)
             for i, future in enumerate(as_completed(futures)):
                 results.append(future.result())
@@ -156,7 +165,7 @@ if st.button("🚀 Run Checker"):
         col3.metric("❌ NO", no_count)
         col4.metric("⚠ Errors", error_count)
 
-        # Color the table
+        # Color table
         def color_cells(val):
             if val == "YES":
                 return "background-color: #4CAF50; color: white;"
@@ -174,7 +183,7 @@ if st.button("🚀 Run Checker"):
         st.download_button(
             label="📥 Download Results CSV",
             data=output_csv.getvalue(),
-            file_name=f"ads_check_matrix_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            file_name=f"{check_type}_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
         )
 
