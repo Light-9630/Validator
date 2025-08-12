@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import random
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import io, time
@@ -12,6 +13,8 @@ st.title("📄 Ads.txt Bulk Checker")
 # === SETTINGS ===
 threads = st.number_input("Number of threads", min_value=1, max_value=100, value=20)
 rate_limit_delay = st.number_input("Delay between requests (seconds)", min_value=0.0, max_value=5.0, value=0.2)
+use_proxy = st.checkbox("Use Proxy (optional)")
+proxy_url = st.text_input("Proxy URL (http://user:pass@ip:port)", value="", disabled=not use_proxy)
 
 # ===== INPUT METHODS =====
 st.subheader("1️⃣ Domains List")
@@ -35,31 +38,38 @@ def strip_quotes(s):
         return s[1:-1]
     return s
 
-# Create a session with retry logic
+# Multiple User-Agents for rotation
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+]
+
+# Create a session with retry logic (including 403)
 session = requests.Session()
-retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504, 429])
+retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[403, 429, 500, 502, 503, 504])
 adapter = HTTPAdapter(max_retries=retries)
 session.mount("http://", adapter)
 session.mount("https://", adapter)
+
+if use_proxy and proxy_url.strip():
+    session.proxies = {"http": proxy_url.strip(), "https": proxy_url.strip()}
 
 def fetch_ads_txt(domain, use_https=True):
     scheme = "https" if use_https else "http"
     url = f"{scheme}://{domain}/ads.txt"
 
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/115.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": random.choice(USER_AGENTS),
         "Accept-Language": "en-US,en;q=0.9",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Connection": "keep-alive"
     }
 
     try:
-        time.sleep(rate_limit_delay)  # Rate limiting
-        r = session.get(url, headers=headers, timeout=5)
+        time.sleep(rate_limit_delay + random.uniform(0, 0.3))  # Random delay to avoid detection
+        r = session.get(url, headers=headers, timeout=7)
         r.raise_for_status()
         return r.text
 
@@ -79,7 +89,12 @@ def fetch_ads_txt(domain, use_https=True):
         else:
             raise Exception("Connection Failed")
     except requests.exceptions.HTTPError as e:
-        # Agar HTTPS pe 403 aaye toh HTTP try kare
+        if r.status_code == 403:
+            # Try again with another User-Agent
+            headers["User-Agent"] = random.choice(USER_AGENTS)
+            r2 = session.get(url, headers=headers, timeout=7)
+            if r2.status_code == 200:
+                return r2.text
         if use_https:
             return fetch_ads_txt(domain, use_https=False)
         else:
@@ -89,7 +104,6 @@ def fetch_ads_txt(domain, use_https=True):
             return fetch_ads_txt(domain, use_https=False)
         else:
             raise e
-
 
 def check_ads_txt(domain, entries_to_check):
     try:
@@ -161,5 +175,3 @@ if st.button("🚀 Run Checker"):
         )
 
         st.success(f"✅ Done! Time taken: {datetime.now() - start_time}")
-
-
