@@ -112,9 +112,10 @@ def check_ads_txt(domain, entries_to_check, filename):
             entry_with_space = entry.strip()
             entry_no_space = entry_with_space.replace(" ", "")
             match_found = (
-                any(line.startswith(entry_with_space) for line in ads_lines_with_space)
-                or any(line.startswith(entry_no_space) for line in ads_lines_no_space)
+                entry_with_space in ads_lines_with_space   # exact match including spaces
+                or entry_no_space in ads_lines_no_space    # match ignoring spaces
             )
+
             result[entry] = "YES" if match_found else "NO"
         return result
     except Exception as e:
@@ -200,5 +201,6 @@ if st.button("🚀 Run Checker"):
         )
 
         st.success(f"✅ Done! Time taken: {datetime.now() - start_time}")
+
 
 
