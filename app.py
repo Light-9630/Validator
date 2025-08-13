@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import io
 from datetime import datetime
 
 # ==== PAGE CONFIG ====
@@ -13,21 +12,19 @@ def normalize(val):
     return val.replace(" ", "").replace(",", "").lower()
 
 def parse_line(line):
-    """Split line into parts"""
+    """Split line into exactly 3 parts: Domain, Seller ID, Type"""
     parts = [p.strip() for p in line.split(",")]
-    while len(parts) < 3:
-        parts.append("")
-    return parts
+    if len(parts) < 3:
+        parts += [""] * (3 - len(parts))  # pad missing
+    return parts[:3]  # keep only first 3
 
 def get_lines_from_input(text):
     return [line.strip() for line in text.strip().splitlines() if line.strip()]
 
 def match_lines(source_lines, check_lines):
     """Compare with seller ID case-sensitive"""
-    # Convert source to list of parsed fields
     source_parsed = [parse_line(line) for line in source_lines]
-    matches = []
-    mismatches = []
+    matches, mismatches = [], []
 
     for check_line in check_lines:
         check_parts = parse_line(check_line)
@@ -37,7 +34,7 @@ def match_lines(source_lines, check_lines):
             cond1 = normalize(src_parts[0]) == normalize(check_parts[0])
             cond3 = normalize(src_parts[2]) == normalize(check_parts[2])
             # Seller ID (index 1) → exact match (case-sensitive)
-            cond2 = src_parts[1].strip() == check_parts[1].strip()
+            cond2 = src_parts[1] == check_parts[1]
 
             if cond1 and cond2 and cond3:
                 matches.append(check_parts)
@@ -90,7 +87,6 @@ if st.button("🔍 Compare"):
     if 'matches' in locals():
         now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-        # Format in old CSV format
         matches_df = pd.DataFrame(matches, columns=["Domain", "Seller ID", "Type"])
         matches_df["Match Status"] = "YES"
 
