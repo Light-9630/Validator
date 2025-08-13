@@ -3,90 +3,138 @@ import pandas as pd
 from datetime import datetime
 
 # ==== PAGE CONFIG ====
-st.set_page_config(page_title="Ads.txt / App-Ads.txt Checker", layout="wide")
-st.title("📄 Ads.txt / App-Ads.txt Checker")
+st.set_page_config(page_title="ads.txt / app-ads.txt — Single Check", layout="wide")
+st.title("📄 Single-Line Check for ads.txt / app-ads.txt")
 
 # ==== HELPERS ====
-def normalize(val):
-    """Remove spaces, commas, lowercase"""
+def normalize(val: str) -> str:
+    """Remove spaces and commas, lowercase (for non-seller fields)."""
     return val.replace(" ", "").replace(",", "").lower()
 
-def parse_line(line):
-    """Split line into exactly 3 parts for comparison"""
-    parts = [p.strip() for p in line.split(",")]
+def parse_three_fields(line: str):
+    """
+    Split into exactly 3 fields (Domain/Exchange, Seller ID, Relationship Type).
+    Ignore everything after 3rd field, pad missing as empty.
+    """
+    # strip comments (# ... ) if present
+    line_ = line.split("#", 1)[0].strip()
+    if not line_:
+        return ["", "", ""], ""
+    parts = [p.strip() for p in line_.split(",")]
     if len(parts) < 3:
         parts += [""] * (3 - len(parts))
-    return parts[:3], line.strip()
+    return parts[:3], line_.strip()
 
-def get_lines_from_input(text):
-    return [line.strip() for line in text.strip().splitlines() if line.strip()]
+def first_nonempty_line(text: str) -> str:
+    for raw in text.splitlines():
+        s = raw.split("#", 1)[0].strip()
+        if s:
+            return s
+    return ""
 
-def check_matches(source_lines, check_lines):
-    """Return dict {check_line: YES/NO}"""
-    source_parsed = [parse_line(line) for line in source_lines]
-    results = {}
+def get_lines_from_text(text: str):
+    """All non-empty, non-comment lines (for domain content)."""
+    out = []
+    for raw in text.splitlines():
+        s = raw.split("#", 1)[0].strip()
+        if s:
+            out.append(s)
+    return out
 
-    for check_line in check_lines:
-        check_parts, _ = parse_line(check_line)
-        matched = False
-        for src_parts, _ in source_parsed:
-            cond1 = normalize(src_parts[0]) == normalize(check_parts[0])
-            cond3 = normalize(src_parts[2]) == normalize(check_parts[2])
-            cond2 = src_parts[1] == check_parts[1]  # case-sensitive seller ID
-            if cond1 and cond2 and cond3:
-                matched = True
-                break
-        results[check_line] = "YES" if matched else "NO"
+def check_match(domain_lines: list[str], target_line: str) -> bool:
+    """True if any line in domain matches the target per rules."""
+    tgt_parts, _ = parse_three_fields(target_line)
+    if tgt_parts == ["", "", ""]:
+        return False
 
-    return results
+    for src in domain_lines:
+        src_parts, _ = parse_three_fields(src)
+        if src_parts == ["", "", ""]:
+            continue
 
-# ==== INPUT OPTIONS ====
-input_type = st.radio("Select Input Method", ["Paste Text", "Upload File"])
-st.subheader("Check List (lines to search in each domain)")
-check_text = st.text_area("Paste Check List Here", height=150)
+        # Field 0 (exchange/domain) and Field 2 (relationship) -> normalized compare
+        cond1 = normalize(src_parts[0]) == normalize(tgt_parts[0])
+        cond3 = normalize(src_parts[2]) == normalize(tgt_parts[2])
+        # Field 1 (seller id) -> case-sensitive exact
+        cond2 = src_parts[1] == tgt_parts[1]
 
-pages_data = {}  # {page_name: source_lines}
+        if cond1 and cond2 and cond3:
+            return True
+    return False
 
-if input_type == "Paste Text":
-    num_pages = st.number_input("How many pages/domains?", min_value=1, value=1, step=1)
-    for i in range(num_pages):
-        page_name = st.text_input(f"Page {i+1} Name (example.com/ads.txt)", key=f"page{i}")
-        page_content = st.text_area(f"Paste {page_name or 'Page '+str(i+1)} content here", height=150, key=f"content{i}")
-        if page_name and page_content:
-            pages_data[page_name] = get_lines_from_input(page_content)
+# ==== UI ====
+st.markdown("**Choose how to provide the domain’s ads.txt/app-ads.txt and the single line to check.**")
 
-elif input_type == "Upload File":
-    uploaded_files = st.file_uploader("Upload one or more source files", type=["txt", "csv"], accept_multiple_files=True)
-    for file in uploaded_files:
-        page_name = file.name
-        page_content = file.read().decode("utf-8")
-        pages_data[page_name] = get_lines_from_input(page_content)
+with st.expander("Domain/Page Content (choose ONE method)"):
+    domain_method = st.radio("Domain content input", ["Paste", "Upload"], horizontal=True, key="dom_m")
+    domain_page_name = st.text_input("Page (e.g., example.com/ads.txt or example.com/app-ads.txt)",
+                                     placeholder="example.com/app-ads.txt")
+    domain_text = ""
+    if domain_method == "Paste":
+        domain_text = st.text_area("Paste domain file content here", height=200, key="dom_paste")
+    else:
+        dom_file = st.file_uploader("Upload ads.txt / app-ads.txt", type=["txt", "csv"], key="dom_upload")
+        if dom_file:
+            domain_text = dom_file.read().decode("utf-8", errors="ignore")
+            if not domain_page_name:
+                domain_page_name = dom_file.name
+
+with st.expander("Single Line to Search (choose ONE method)", expanded=True):
+    line_method = st.radio("Search line input", ["Paste", "Upload"], horizontal=True, key="line_m")
+    target_line = ""
+    if line_method == "Paste":
+        target_line = st.text_input(
+            "Paste ONE ads.txt/app-ads.txt line (e.g., google.com, pub-2749054827332983, RESELLER)",
+            key="line_paste"
+        )
+    else:
+        line_file = st.file_uploader("Upload a file containing ONE line (uses first non-empty line)",
+                                     type=["txt", "csv"], key="line_upload")
+        if line_file:
+            raw = line_file.read().decode("utf-8", errors="ignore")
+            target_line = first_nonempty_line(raw)
 
 # ==== PROCESS ====
-if st.button("🔍 Compare"):
-    if not check_text:
-        st.error("Please paste the check list.")
-    elif not pages_data:
-        st.error("Please provide at least one page/domain content.")
+run = st.button("🔍 Check Now")
+
+if run:
+    # Minimal validations (no extra BS)
+    if not domain_text.strip():
+        st.error("Domain content is empty. Paste or upload the domain file.")
+    elif not target_line.strip():
+        st.error("Search line is empty. Paste or upload the single line.")
     else:
-        check_lines = get_lines_from_input(check_text)
-        final_results = {}
+        # Prepare domain lines and perform match
+        domain_lines = get_lines_from_text(domain_text)
+        is_match = check_match(domain_lines, target_line)
 
-        for page, src_lines in pages_data.items():
-            final_results[page] = check_matches(src_lines, check_lines)
-
-        # Create DataFrame: Pages as rows, check_lines as columns
-        df = pd.DataFrame.from_dict(final_results, orient="index")
-        df = df[check_lines]  # preserve original check line order
+        # Build single-row, single-column matrix
+        col_name = target_line.strip()
+        df = pd.DataFrame({col_name: ["YES" if is_match else "NO"]}, index=[domain_page_name or "domain"])
         df.index.name = "Page"
 
+        st.success("Done. Here’s your result matrix (one row × one column):")
         st.dataframe(df)
 
+        # Download CSV
         now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         csv_bytes = df.to_csv().encode("utf-8")
         st.download_button(
-            "⬇ Download Results CSV",
+            "⬇ Download CSV",
             csv_bytes,
-            f"comparison_matrix_{now_str}.csv",
+            f"single_check_{now_str}.csv",
             "text/csv"
         )
+
+        # Small sanity hints
+        with st.expander("What was compared (for sanity)?"):
+            p, _ = parse_three_fields(target_line)
+            st.markdown(
+                f"""
+- **Target (3 fields):**  
+  1. Exchange/Domain → `{p[0] or ''}` (ignoring spaces/commas, case-insensitive)  
+  2. Seller ID → `{p[1] or ''}` (**case-sensitive exact**)  
+  3. Relationship → `{p[2] or ''}` (ignoring spaces/commas, case-insensitive)
+- **Domain lines scanned:** {len(domain_lines)}
+"""
+            )
