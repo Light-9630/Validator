@@ -33,15 +33,21 @@ def strip_quotes(s):
         return s[1:-1]
     return s
 
-# Normalize ads.txt line for comparison
 def normalize_ads_line(line):
-    parts = [p.strip() for p in line.split(",")]
-    if len(parts) < 3:
-        return ",".join([p.lower().strip() for p in parts])  # fallback: lowercase everything
-    # lowercase first and third, keep second as is
-    parts[0] = parts[0].lower()
-    parts[2] = parts[2].lower()
+    parts = [p.strip() for p in line.split(',')]
+    # Lowercase domain & relationship, keep seller ID as-is
+    for i in range(len(parts)):
+        if i != 1:  # second value (seller ID) untouched
+            parts[i] = parts[i].lower()
     return ",".join(parts)
+
+search_norm = normalize_ads_line(search_line)
+ads_norm_list = [normalize_ads_line(l) for l in ads_file_lines]
+
+if search_norm in ads_norm_list:
+    result = "YES"
+else:
+    result = "NO"
 
 # Create session with retry + UA
 session = requests.Session()
@@ -205,3 +211,4 @@ if st.button("🚀 Run Checker"):
         )
 
         st.success(f"✅ Done! Time taken: {datetime.now() - start_time}")
+
