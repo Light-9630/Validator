@@ -157,7 +157,6 @@ if st.button("🚀 Run Checker"):
         results = []
         progress_bar = st.progress(0)
         status_text = st.empty()
-
         with ThreadPoolExecutor(max_workers=threads) as executor:
             futures = {executor.submit(check_ads_txt, d, entries_to_check, check_type): d for d in domains}
             total = len(futures)
@@ -165,7 +164,6 @@ if st.button("🚀 Run Checker"):
                 results.append(future.result())
                 progress_bar.progress((i + 1) / total)
                 status_text.text(f"✅ Checked {i+1}/{total} domains")
-
         df_results = pd.DataFrame(results)
 
         # Summary counts
@@ -202,4 +200,5 @@ if st.button("🚀 Run Checker"):
         )
 
         st.success(f"✅ Done! Time taken: {datetime.now() - start_time}")
+
 
