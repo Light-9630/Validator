@@ -13,7 +13,7 @@ st.markdown("---")
 
 # === SETTINGS ===
 with st.sidebar:
-    st.header("⚙ Settings")
+    st.header("⚙️ Settings")
     threads = st.number_input("Number of concurrent threads", min_value=1, max_value=100, value=20)
     rate_limit_delay = st.number_input("Delay between requests (seconds)", min_value=0.0, max_value=5.0, value=0.2)
     check_type = st.radio(
@@ -39,15 +39,34 @@ def read_lines_from_textarea(text):
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 def normalize_ads_line(line):
-    """Normalizes an ads.txt line for consistent comparison."""
-    line = line.strip().lower()
-    if line.startswith("#"):
+    """
+    Normalizes an ads.txt or app-ads.txt line for consistent comparison.
+    Handles different formats and whitespace.
+    """
+    line = line.strip()
+
+    # Ignore comments and blank lines
+    if not line or line.startswith("#"):
         return ""
+
+    # Strip quotes from the entire line if they exist
+    if (line.startswith('"') and line.endswith('"')) or (line.startswith("'") and line.endswith("'")):
+        line = line[1:-1]
+
     parts = [p.strip() for p in line.split(",")]
+    
+    # Handle the standard format with at least three parts
     if len(parts) >= 3:
-        # Keep second part as is (publisher ID), normalize others
+        # Normalize the domain and relationship to lowercase
         parts[0] = parts[0].lower()
         parts[2] = parts[2].lower()
+        
+        # The publisher ID (parts[1]) should be left as is, as it's case-sensitive
+        
+        # The fourth part (certification authority ID) should also be normalized to lowercase
+        if len(parts) > 3:
+            parts[3] = parts[3].lower()
+            
     return ",".join(parts)
 
 # ===== REQUEST SESSION SETUP =====
@@ -129,21 +148,22 @@ with tab1:
     with st.expander("📂 Upload a domains file (.csv or .txt)"):
         domains_file = st.file_uploader("Upload Domains", type=["csv", "txt"])
     st.info("OR")
-    with st.expander("✏ Paste a list of domains"):
+    with st.expander("✏️ Paste a list of domains"):
         domains_paste = st.text_area("Paste one domain per line here", height=150)
 
 with tab2:
     with st.expander("📂 Upload an entries file (.csv or .txt)"):
         lines_file = st.file_uploader("Upload Ads.txt Entries", type=["csv", "txt"])
     st.info("OR")
-    with st.expander("✏ Paste a list of ads.txt entries"):
+    with st.expander("✏️ Paste a list of ads.txt entries"):
         lines_paste = st.text_area("Paste one entry per line here", height=150)
 
 st.markdown("---")
+
 # ===== RUN CHECKER =====
 if st.button("🚀 Run Checker", use_container_width=True):
     if not (domains_file or domains_paste) or not (lines_file or lines_paste):
-        st.error("⚠ Please provide both Domains and Ads.txt entries.")
+        st.error("⚠️ Please provide both Domains and Ads.txt entries.")
     else:
         start_time = datetime.now()
         
@@ -163,7 +183,7 @@ if st.button("🚀 Run Checker", use_container_width=True):
         entries_to_check = [e for e in entries_to_check if e]
 
         if not domains or not entries_to_check:
-            st.error("⚠ Invalid input. Please check your domains and entries.")
+            st.error("⚠️ Invalid input. Please check your domains and entries.")
         else:
             results = []
             progress_bar = st.progress(0)
@@ -188,7 +208,7 @@ if st.button("🚀 Run Checker", use_container_width=True):
             col1.metric("Total Domains", len(domains))
             col2.metric("✅ YES", yes_count)
             col3.metric("❌ NO", no_count)
-            col4.metric("⚠ Errors", error_count)
+            col4.metric("⚠️ Errors", error_count)
             
             st.markdown("---")
 
