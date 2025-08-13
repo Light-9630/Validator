@@ -33,6 +33,16 @@ def strip_quotes(s):
         return s[1:-1]
     return s
 
+# Normalize ads.txt line for comparison
+def normalize_ads_line(line):
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) < 3:
+        return ",".join([p.lower().strip() for p in parts])  # fallback: lowercase everything
+    # lowercase first and third, keep second as is
+    parts[0] = parts[0].lower()
+    parts[2] = parts[2].lower()
+    return ",".join(parts)
+
 # Create session with retry + UA
 session = requests.Session()
 retries = Retry(
@@ -101,21 +111,15 @@ def fetch_ads_txt(domain, filename="ads.txt", use_https=True):
 def check_ads_txt(domain, entries_to_check, filename):
     try:
         ads_content = fetch_ads_txt(domain, filename)
-        ads_lines_with_space = [
-            line.strip()
+        ads_lines = [
+            normalize_ads_line(line)
             for line in ads_content.splitlines()
             if line.strip() and not line.strip().startswith("#")
         ]
-        ads_lines_no_space = [line.replace(" ", "") for line in ads_lines_with_space]
         result = {"domain": domain}
         for entry in entries_to_check:
-            entry_with_space = entry.strip()
-            entry_no_space = entry_with_space.replace(" ", "")
-            match_found = (
-                entry_with_space in ads_lines_with_space   # exact match including spaces
-                or entry_no_space in ads_lines_no_space    # match ignoring spaces
-            )
-
+            normalized_entry = normalize_ads_line(entry)
+            match_found = normalized_entry in ads_lines
             result[entry] = "YES" if match_found else "NO"
         return result
     except Exception as e:
@@ -201,6 +205,3 @@ if st.button("🚀 Run Checker"):
         )
 
         st.success(f"✅ Done! Time taken: {datetime.now() - start_time}")
-
-
-
