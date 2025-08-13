@@ -1,140 +1,100 @@
 import streamlit as st
 import pandas as pd
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+import io
+from requests.adapters import HTTPAdapter, Retry
 
-# ==== PAGE CONFIG ====
-st.set_page_config(page_title="ads.txt / app-ads.txt — Single Check", layout="wide")
-st.title("📄 Single-Line Check for ads.txt / app-ads.txt")
+# === PAGE CONFIG ===
+st.set_page_config(page_title="Ads.txt / App-Ads.txt Bulk Checker", layout="wide")
+st.title("📄 Ads.txt / App-Ads.txt Bulk Checker")
 
-# ==== HELPERS ====
-def normalize(val: str) -> str:
-    """Remove spaces and commas, lowercase (for non-seller fields)."""
-    return val.replace(" ", "").replace(",", "").lower()
+# === INPUT: THREAD COUNT ===
+threads = st.number_input("⚙ Number of threads", min_value=1, max_value=50, value=10)
 
-def parse_three_fields(line: str):
-    """
-    Split into exactly 3 fields (Domain/Exchange, Seller ID, Relationship Type).
-    Ignore everything after 3rd field, pad missing as empty.
-    """
-    # strip comments (# ... ) if present
-    line_ = line.split("#", 1)[0].strip()
-    if not line_:
-        return ["", "", ""], ""
-    parts = [p.strip() for p in line_.split(",")]
-    if len(parts) < 3:
-        parts += [""] * (3 - len(parts))
-    return parts[:3], line_.strip()
+# === INPUT: BULK PASTE ===
+paste_input = st.text_area("📋 Paste domains (one per line)", height=200)
 
-def first_nonempty_line(text: str) -> str:
-    for raw in text.splitlines():
-        s = raw.split("#", 1)[0].strip()
-        if s:
-            return s
-    return ""
+# === INPUT: FILE UPLOAD ===
+uploaded_file = st.file_uploader("📂 Or upload a file (.txt or .csv)", type=["txt", "csv"])
 
-def get_lines_from_text(text: str):
-    """All non-empty, non-comment lines (for domain content)."""
-    out = []
-    for raw in text.splitlines():
-        s = raw.split("#", 1)[0].strip()
-        if s:
-            out.append(s)
-    return out
+# === TARGET LINES TO SEARCH ===
+lines_input = st.text_area("🔍 Lines to search in ads.txt/app-ads.txt (one per line)", height=150)
 
-def check_match(domain_lines: list[str], target_line: str) -> bool:
-    """True if any line in domain matches the target per rules."""
-    tgt_parts, _ = parse_three_fields(target_line)
-    if tgt_parts == ["", "", ""]:
-        return False
+# === PARSE INPUT DOMAINS ===
+domains = []
+if paste_input.strip():
+    domains += [d.strip() for d in paste_input.strip().split("\n") if d.strip()]
 
-    for src in domain_lines:
-        src_parts, _ = parse_three_fields(src)
-        if src_parts == ["", "", ""]:
-            continue
+if uploaded_file:
+    if uploaded_file.name.endswith(".txt"):
+        domains += [line.strip() for line in uploaded_file.read().decode().split("\n") if line.strip()]
+    elif uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+        for col in df.columns:
+            domains += [str(x).strip() for x in df[col] if str(x).strip()]
 
-        # Field 0 (exchange/domain) and Field 2 (relationship) -> normalized compare
-        cond1 = normalize(src_parts[0]) == normalize(tgt_parts[0])
-        cond3 = normalize(src_parts[2]) == normalize(tgt_parts[2])
-        # Field 1 (seller id) -> case-sensitive exact
-        cond2 = src_parts[1] == tgt_parts[1]
+domains = list(set(domains))  # remove duplicates
 
-        if cond1 and cond2 and cond3:
-            return True
-    return False
+# === PREPARE LINES TO SEARCH ===
+search_lines = [line.strip() for line in lines_input.strip().split("\n") if line.strip()]
 
-# ==== UI ====
-st.markdown("**Choose how to provide the domain’s ads.txt/app-ads.txt and the single line to check.**")
+# === HTTP SESSION WITH RETRIES ===
+session = requests.Session()
+retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
+session.mount("http://", HTTPAdapter(max_retries=retries))
+session.mount("https://", HTTPAdapter(max_retries=retries))
 
-with st.expander("Domain/Page Content (choose ONE method)"):
-    domain_method = st.radio("Domain content input", ["Paste", "Upload"], horizontal=True, key="dom_m")
-    domain_page_name = st.text_input("Page (e.g., example.com/ads.txt or example.com/app-ads.txt)",
-                                     placeholder="example.com/app-ads.txt")
-    domain_text = ""
-    if domain_method == "Paste":
-        domain_text = st.text_area("Paste domain file content here", height=200, key="dom_paste")
+# === FETCH ADS.TXT / APP-ADS.TXT ===
+def fetch_ads(domain):
+    urls = [
+        f"https://{domain}/ads.txt",
+        f"https://{domain}/app-ads.txt",
+        f"http://{domain}/ads.txt",
+        f"http://{domain}/app-ads.txt"
+    ]
+    for url in urls:
+        try:
+            r = session.get(url, timeout=5)
+            if r.status_code == 200 and len(r.text) > 0:
+                return domain, url, r.text.lower()
+        except requests.RequestException:
+            pass
+    return domain, None, None
+
+results = []
+if st.button("🚀 Run Check"):
+    if not domains:
+        st.error("❌ Please provide at least one domain.")
+    elif not search_lines:
+        st.error("❌ Please provide lines to search.")
     else:
-        dom_file = st.file_uploader("Upload ads.txt / app-ads.txt", type=["txt", "csv"], key="dom_upload")
-        if dom_file:
-            domain_text = dom_file.read().decode("utf-8", errors="ignore")
-            if not domain_page_name:
-                domain_page_name = dom_file.name
+        progress = st.progress(0)
+        data = []
 
-with st.expander("Single Line to Search (choose ONE method)", expanded=True):
-    line_method = st.radio("Search line input", ["Paste", "Upload"], horizontal=True, key="line_m")
-    target_line = ""
-    if line_method == "Paste":
-        target_line = st.text_input(
-            "Paste ONE ads.txt/app-ads.txt line (e.g., google.com, pub-2749054827332983, RESELLER)",
-            key="line_paste"
-        )
-    else:
-        line_file = st.file_uploader("Upload a file containing ONE line (uses first non-empty line)",
-                                     type=["txt", "csv"], key="line_upload")
-        if line_file:
-            raw = line_file.read().decode("utf-8", errors="ignore")
-            target_line = first_nonempty_line(raw)
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            futures = {executor.submit(fetch_ads, d): d for d in domains}
+            total = len(futures)
+            for i, future in enumerate(as_completed(futures)):
+                domain, url, content = future.result()
+                row = {"Page": url if url else domain}
+                for line in search_lines:
+                    if content and line.lower() in content:
+                        row[line] = "Yes"
+                    else:
+                        row[line] = "No"
+                data.append(row)
+                progress.progress((i + 1) / total)
 
-# ==== PROCESS ====
-run = st.button("🔍 Check Now")
+        df_out = pd.DataFrame(data)
+        st.dataframe(df_out)
 
-if run:
-    # Minimal validations (no extra BS)
-    if not domain_text.strip():
-        st.error("Domain content is empty. Paste or upload the domain file.")
-    elif not target_line.strip():
-        st.error("Search line is empty. Paste or upload the single line.")
-    else:
-        # Prepare domain lines and perform match
-        domain_lines = get_lines_from_text(domain_text)
-        is_match = check_match(domain_lines, target_line)
-
-        # Build single-row, single-column matrix
-        col_name = target_line.strip()
-        df = pd.DataFrame({col_name: ["YES" if is_match else "NO"]}, index=[domain_page_name or "domain"])
-        df.index.name = "Page"
-
-        st.success("Done. Here’s your result matrix (one row × one column):")
-        st.dataframe(df)
-
-        # Download CSV
-        now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        csv_bytes = df.to_csv().encode("utf-8")
+        # === DOWNLOAD CSV ===
+        csv = df_out.to_csv(index=False)
         st.download_button(
-            "⬇ Download CSV",
-            csv_bytes,
-            f"single_check_{now_str}.csv",
-            "text/csv"
+            label="📥 Download CSV",
+            data=csv,
+            file_name=f"ads_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
         )
-
-        # Small sanity hints
-        with st.expander("What was compared (for sanity)?"):
-            p, _ = parse_three_fields(target_line)
-            st.markdown(
-                f"""
-- **Target (3 fields):**  
-  1. Exchange/Domain → `{p[0] or ''}` (ignoring spaces/commas, case-insensitive)  
-  2. Seller ID → `{p[1] or ''}` (**case-sensitive exact**)  
-  3. Relationship → `{p[2] or ''}` (ignoring spaces/commas, case-insensitive)
-- **Domain lines scanned:** {len(domain_lines)}
-"""
-            )
