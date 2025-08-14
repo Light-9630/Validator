@@ -20,7 +20,14 @@ paste_input = st.text_area("📋 Paste domains (one per line)", height=200)
 uploaded_file = st.file_uploader("📂 Or upload a file (.txt or .csv)", type=["txt", "csv"])
 
 # === TARGET LINES TO SEARCH ===
-lines_input = st.text_area("🔍 Lines to search in ads.txt/app-ads.txt (one per line)", height=150)
+lines_input = st.text_area("🔍 Lines to search (one per line)", height=150)
+
+# === CHECKBOX OPTIONS ===
+check_ads = st.checkbox("Check ads.txt", value=True)
+check_app_ads = st.checkbox("Check app-ads.txt", value=True)
+
+if not check_ads and not check_app_ads:
+    st.warning("⚠ Please select at least one option (ads.txt or app-ads.txt)")
 
 # === PARSE INPUT DOMAINS ===
 domains = []
@@ -48,12 +55,18 @@ session.mount("https://", HTTPAdapter(max_retries=retries))
 
 # === FETCH ADS.TXT / APP-ADS.TXT ===
 def fetch_ads(domain):
-    urls = [
-        f"https://{domain}/ads.txt",
-        f"https://{domain}/app-ads.txt",
-        f"http://{domain}/ads.txt",
-        f"http://{domain}/app-ads.txt"
-    ]
+    urls = []
+    if check_ads:
+        urls.extend([
+            f"https://{domain}/ads.txt",
+            f"http://{domain}/ads.txt"
+        ])
+    if check_app_ads:
+        urls.extend([
+            f"https://{domain}/app-ads.txt",
+            f"http://{domain}/app-ads.txt"
+        ])
+
     for url in urls:
         try:
             r = session.get(url, timeout=5)
@@ -69,6 +82,8 @@ if st.button("🚀 Run Check"):
         st.error("❌ Please provide at least one domain.")
     elif not search_lines:
         st.error("❌ Please provide lines to search.")
+    elif not check_ads and not check_app_ads:
+        st.error("❌ Please select at least one option to check.")
     else:
         progress = st.progress(0)
         data = []
@@ -78,7 +93,7 @@ if st.button("🚀 Run Check"):
             total = len(futures)
             for i, future in enumerate(as_completed(futures)):
                 domain, url, content = future.result()
-                row = {"Page": url if url else domain}
+                row = {"Domain": domain, "File Checked": url if url else "Not Found"}
                 for line in search_lines:
                     if content and line.lower() in content:
                         row[line] = "Yes"
