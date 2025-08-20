@@ -1,108 +1,97 @@
 import streamlit as st
 import pandas as pd
 import requests
-from io import StringIO
-from datetime import datetime
 
+# === SETTINGS ===
 st.set_page_config(page_title="Ads.txt / App-Ads.txt Checker", layout="wide")
 st.title("📄 Ads.txt / App-Ads.txt Bulk Checker")
 
-# === Inputs ===
-st.subheader("Paste Domains (where ads.txt will be checked)")
-domains_text = st.text_area("Enter domains (one per line)", height=150, placeholder="example.com\ndailymotion.com")
+# Input: Domains where we search
+domain_input = st.text_area("Paste domains where ads.txt/app-ads.txt will be checked (one per line)")
+domains = [d.strip() for d in domain_input.splitlines() if d.strip()]
 
-st.subheader("Paste Lines to Search (domain, id, relation optional)")
-lines_text = st.text_area("Enter lines (one per line)", height=200,
-                          placeholder="pubmatic.com, 166253, DIRECT\nvideo.unrulymedia.com, 906189653\nkrushmedia.com, AJxF6R667a9M6CaTvK")
+# Input: Lines user wants to validate
+lines_input = st.text_area("Paste lines (supply chain) you want to validate")
+lines = [l.strip() for l in lines_input.splitlines() if l.strip()]
 
-# Search mode toggle
-mode = st.radio("Search Mode", ["Flexible (Domain + ID only)", "Strict (Domain + ID + Relation)"])
-ads_type = st.radio("Check in:", ["ads.txt", "app-ads.txt"])
+# Search Mode
+mode = st.radio("Search Mode", ["Strict (all parts must match)", "Flexible (only domain+id must match)"])
+mode_strict = (mode == "Strict (all parts must match)")
 
-# === Parse input lines into structured dataframe ===
-def parse_lines(raw_text):
-    rows = []
-    for line in raw_text.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) == 1:
-            rows.append([parts[0], "", ""])
-        elif len(parts) == 2:
-            rows.append([parts[0], parts[1], ""])
-        else:
-            rows.append([parts[0], parts[1], parts[2]])
-    return pd.DataFrame(rows, columns=["Line_Domain", "Pub_ID", "Relation"])
+# ads.txt or app-ads.txt toggle
+ads_type = st.radio("Select type:", ["ads.txt", "app-ads.txt"])
 
-if lines_text.strip():
-    st.subheader("🔎 Lines to Search (Editable)")
-    lines_df = parse_lines(lines_text)
-    edited_lines = st.data_editor(lines_df, num_rows="dynamic", use_container_width=True)
+# Parse lines into parts (domain, id, relation)
+parsed_lines = []
+for l in lines:
+    parts = [p.strip() for p in l.split(",")]
+    if len(parts) >= 2:
+        domain = parts[0]
+        pub_id = parts[1]
+        relation = parts[2] if len(parts) >= 3 else None
+        parsed_lines.append((domain, pub_id, relation))
+
+if parsed_lines:
+    st.write("🔎 Parsed Lines (editable if needed):")
+    df_edit = pd.DataFrame(parsed_lines, columns=["Domain", "Pub ID", "Relation"])
+    edited_lines = st.data_editor(df_edit, num_rows="dynamic")
 else:
-    edited_lines = pd.DataFrame(columns=["Line_Domain", "Pub_ID", "Relation"])
+    edited_lines = []
 
-# === Checker function ===
-def fetch_ads(domain, ads_type):
-    url = f"http://{domain}/{ads_type}"
+# Function to fetch ads.txt
+def fetch_ads(domain):
+    url = f"https://{domain}/{ads_type}"
     try:
-        resp = requests.get(url, timeout=8)
+        resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
-            return resp.text.splitlines()
-    except:
-        return []
-    return []
-
-def check_lines(domain, ads_lines, search_lines, mode):
-    results = []
-    for _, row in search_lines.iterrows():
-        line_domain, pub_id, relation = row["Line_Domain"], row["Pub_ID"], row["Relation"]
-
-        found = False
-        for adline in ads_lines:
-            parts = [p.strip() for p in adline.split(",")]
-            if len(parts) < 2:
-                continue
-            ad_domain, ad_id = parts[0], parts[1]
-            ad_rel = parts[2] if len(parts) > 2 else ""
-
-            if mode.startswith("Flexible"):
-                if line_domain.lower() == ad_domain.lower() and pub_id == ad_id:
-                    found = True
-                    break
-            else:  # Strict
-                if (line_domain.lower() == ad_domain.lower() and
-                        pub_id == ad_id and
-                        relation.upper() == ad_rel.upper()):
-                    found = True
-                    break
-        results.append("YES" if found else "NO")
-    return results
-
-# === Run Button ===
-if st.button("🚀 Run Check"):
-    domains = [d.strip() for d in domains_text.strip().splitlines() if d.strip()]
-    output_rows = []
-
-    for domain in domains:
-        ads_lines = fetch_ads(domain, "app-ads.txt" if ads_type == "app-ads.txt" else "ads.txt")
-        if not ads_lines:
-            results = ["Not Found"] * len(edited_lines)
+            return [line.strip() for line in resp.text.splitlines() if line.strip() and not line.startswith("#")]
         else:
-            results = check_lines(domain, ads_lines, edited_lines, mode)
+            return None
+    except:
+        return None
 
-        row = [domain] + results
-        output_rows.append(row)
+# Run check
+if st.button("Run Checker"):
+    if not domains or not len(edited_lines):
+        st.error("Please paste both domains and lines to check.")
+    else:
+        results = []
+        for site in domains:
+            ads_lines = fetch_ads(site)
+            row = {"domain": site}
+            if not ads_lines:
+                # If file not found or error
+                for _, line in edited_lines.iterrows():
+                    row[f"{line['Domain']},{line['Pub ID']}"] = "NOT FOUND"
+            else:
+                for _, line in edited_lines.iterrows():
+                    target_domain = str(line["Domain"]).strip().lower()
+                    target_id = str(line["Pub ID"]).strip()
+                    target_rel = str(line["Relation"]).strip() if pd.notna(line["Relation"]) else None
 
-    # Prepare output dataframe
-    header = ["Domain"] + [
-        f"{r['Line_Domain']}, {r['Pub_ID']}" + (f", {r['Relation']}" if r['Relation'] else "")
-        for _, r in edited_lines.iterrows()
-    ]
-    df_out = pd.DataFrame(output_rows, columns=header)
+                    found = False
+                    for adl in ads_lines:
+                        parts = [p.strip().lower() for p in adl.split(",")]
+                        if len(parts) >= 2:
+                            d, pid = parts[0], parts[1]
+                            rel = parts[2] if len(parts) >= 3 else None
 
-    # Show table
-    st.subheader("✅ Results")
-    st.dataframe(df_out, use_container_width=True)
+                            if mode_strict:
+                                if d == target_domain and pid == target_id and rel == (target_rel or rel):
+                                    found = True
+                                    break
+                            else:  # Flexible: only domain+id
+                                if d == target_domain and pid == target_id:
+                                    found = True
+                                    break
 
-    # CSV download
-    filename = f"ads_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    csv = df_out.to_csv(index=False)
-    st.download_button("⬇ Download CSV", csv, file_name=filename, mime="text/csv")
+                    row[f"{line['Domain']},{line['Pub ID']}"] = "YES" if found else "NO"
+
+            results.append(row)
+
+        df_out = pd.DataFrame(results)
+        st.dataframe(df_out)
+
+        # Export CSV
+        csv = df_out.to_csv(index=False)
+        st.download_button("💾 Download CSV", csv, "results.csv", "text/csv")
