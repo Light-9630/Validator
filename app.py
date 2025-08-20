@@ -2,78 +2,90 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from requests.adapters import HTTPAdapter, Retry
 
+# ============ SETTINGS ============
 st.set_page_config(page_title="Ads.txt / App-Ads.txt Checker", layout="wide")
 st.title("📄 Ads.txt / App-Ads.txt Bulk Checker")
 
-# === INPUT TEXT AREA ===
-st.write("Paste your lines below (format: `domain, id, relation(optional)`)")
+# --- Retry adapter for robust requests ---
+session = requests.Session()
+retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500,502,503,504])
+session.mount("http://", HTTPAdapter(max_retries=retries))
+session.mount("https://", HTTPAdapter(max_retries=retries))
 
-user_input = st.text_area("Input Lines", height=200, placeholder="pubmatic.com, 166253, DIRECT\nkrushmedia.com, AJxF6R667a9M6CaTvK")
+# --- Sidebar options ---
+mode = st.sidebar.radio("Search Mode:", ["Flexible (Domain+ID)", "Strict (Domain+ID+Relation)"])
+file_type = st.sidebar.radio("File to Check:", ["ads.txt", "app-ads.txt"])
 
-if user_input.strip():
-    # Split into rows and columns
-    data = []
-    for line in user_input.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        # Ensure 3 columns
-        while len(parts) < 3:
-            parts.append("")
-        data.append(parts[:3])
+# --- Input for domains where we fetch ads.txt ---
+st.subheader("1️⃣ Paste domains where we will fetch ads.txt/app-ads.txt")
+domains_input = st.text_area("Enter domains (one per line)", height=150)
 
-    df = pd.DataFrame(data, columns=["Domain", "Publisher ID", "Relation"])
-    st.write("### ✍️ Editable Input Table")
-    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+# --- Input for lines to check ---
+st.subheader("2️⃣ Paste ads.txt/app-ads.txt lines to check")
+lines_input = st.text_area("Enter lines (domain,id,relation,extra...)", height=200)
 
-    # === OPTIONS ===
-    col1, col2 = st.columns(2)
-    with col1:
-        file_type = st.radio("File to check", ["ads.txt", "app-ads.txt"], horizontal=True)
-    with col2:
-        match_mode = st.radio("Match Mode", ["Strict (3 parts)", "Flexible (Domain + ID only)"], horizontal=True)
+if st.button("Run Checker"):
+    if not domains_input.strip() or not lines_input.strip():
+        st.error("Please paste both domains and lines to check.")
+    else:
+        domains = [d.strip() for d in domains_input.strip().splitlines() if d.strip()]
+        raw_lines = [l.strip() for l in lines_input.strip().splitlines() if l.strip()]
 
-    threads = st.slider("⚙️ Number of threads", 1, 20, 5)
+        # --- Normalize user lines into parts ---
+        search_lines = []
+        for line in raw_lines:
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 2:
+                continue
+            search_lines.append(parts)
 
-    if st.button("🚀 Run Checker"):
+        # --- Create DataFrame skeleton ---
+        columns = ["Domain"] + [", ".join(p) for p in search_lines]
         results = []
 
-        def check_line(row):
-            domain, pub_id, relation = row["Domain"], row["Publisher ID"], row["Relation"]
-            url = f"http://{domain}/{file_type}"
+        # --- Check each domain ---
+        for dom in domains:
+            url = f"http://{dom}/{file_type}"
             try:
-                resp = requests.get(url, timeout=10)
-                if resp.status_code != 200:
-                    return [domain, pub_id, relation, "❌ No file"]
-
-                found = False
-                for line in resp.text.splitlines():
-                    parts = [p.strip() for p in line.split(",")]
-                    if len(parts) >= 2:
-                        if match_mode.startswith("Strict"):
-                            if len(parts) >= 3 and parts[0] == domain and parts[1] == pub_id and parts[2].upper() == relation.upper():
-                                found = True
-                                break
-                        else:  # Flexible
-                            if parts[0] == domain and parts[1] == pub_id:
-                                found = True
-                                break
-
-                return [domain, pub_id, relation, "✅ Yes" if found else "❌ No"]
-
+                headers = {"User-Agent": "Mozilla/5.0 (AdsCheckerBot)"}
+                resp = session.get(url, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    lines = resp.text.splitlines()
+                else:
+                    lines = []
             except Exception as e:
-                return [domain, pub_id, relation, f"⚠️ Error: {str(e)}"]
+                lines = []
 
-        # Run in parallel
-        with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures = [executor.submit(check_line, row) for _, row in edited_df.iterrows()]
-            for f in as_completed(futures):
-                results.append(f.result())
+            row = {"Domain": dom}
+            for parts in search_lines:
+                found = False
+                for l in lines:
+                    lparts = [p.strip() for p in l.split(",")]
+                    # Flexible match (only domain + id required)
+                    if mode.startswith("Flexible"):
+                        if len(parts) >= 2 and len(lparts) >= 2:
+                            if parts[0] == lparts[0] and parts[1] == lparts[1]:
+                                found = True
+                                break
+                    else:  # Strict match (domain + id + relation)
+                        if len(parts) >= 3 and len(lparts) >= 3:
+                            if parts[0] == lparts[0] and parts[1] == lparts[1] and parts[2] == lparts[2]:
+                                found = True
+                                break
+                row[", ".join(parts)] = "YES" if found else "NO"
+            results.append(row)
 
-        result_df = pd.DataFrame(results, columns=["Domain", "Publisher ID", "Relation", "Result"])
-        st.write("### ✅ Results")
-        st.dataframe(result_df, use_container_width=True)
+        df = pd.DataFrame(results, columns=columns)
 
-        # Download CSV
-        csv = result_df.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Download Results CSV", csv, "results.csv", "text/csv")
+        # --- Show & Save output ---
+        st.subheader("✅ Results")
+        st.dataframe(df, use_container_width=True)
+
+        # Save to CSV
+        fname = f"ads_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        df.to_csv(fname, index=False)
+        st.success(f"Results saved as {fname}")
+        st.download_button("⬇ Download CSV", df.to_csv(index=False), file_name=fname, mime="text/csv")
