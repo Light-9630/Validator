@@ -5,9 +5,16 @@ import io
 
 # Function to fetch and check the ads.txt/app-ads.txt file
 def check_ads_file(domain, lines_to_check, file_type):
-    """Fetches the ads/app-ads file and checks for specified lines."""
+    """
+    Fetches the ads/app-ads file using a User-Agent and provides detailed error handling.
+    """
     
-    # Standardize the domain URL
+    # Use a standard browser User-Agent to avoid 403 Forbidden errors
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+
+    # Standardize the domain URL, prioritizing HTTPS
     if not domain.startswith('http'):
         url = f"https://{domain}/{file_type}"
     else:
@@ -15,48 +22,71 @@ def check_ads_file(domain, lines_to_check, file_type):
     
     found_lines = {}
     
-    # Fetch the file content
     try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        response = requests.get(url, headers=headers, timeout=10)
         
-        file_content = response.text
+        # Check HTTP status code for specific errors
+        if response.status_code == 200:
+            file_content = response.text
+            
+            # Perform the content check
+            for line_key, line_parts in lines_to_check.items():
+                found = "No"
+                for file_line in file_content.splitlines():
+                    if not file_line.strip() or file_line.startswith('#'):
+                        continue
+                    
+                    normalized_file_line = ' '.join(file_line.strip().split()).lower()
+                    
+                    if len(line_parts) >= 3 and len(normalized_file_line.split()) >= 3:
+                        if normalized_file_line.startswith(f"{line_parts[0]} {line_parts[1]} {line_parts[2]}"):
+                            found = "Yes"
+                            break
+                    elif len(line_parts) >= 2:
+                        if normalized_file_line.startswith(f"{line_parts[0]} {line_parts[1]}"):
+                            found = "Yes"
+                            break
+                found_lines[line_key] = found
         
-        # Check for each line
-        for line_key, line_parts in lines_to_check.items():
-            found = "No"
-            # Flexible matching logic (match first two or all three parts)
-            for file_line in file_content.splitlines():
-                if not file_line.strip() or file_line.startswith('#'):
-                    continue
-                
-                # Normalize line for comparison
-                normalized_file_line = ' '.join(file_line.strip().split()).lower()
-                
-                # Check based on user's input parts
-                if len(line_parts) >= 3 and len(normalized_file_line.split()) >= 3:
-                    if normalized_file_line.startswith(f"{line_parts[0]} {line_parts[1]} {line_parts[2]}"):
-                        found = "Yes"
-                        break
-                elif len(line_parts) >= 2:
-                    if normalized_file_line.startswith(f"{line_parts[0]} {line_parts[1]}"):
-                        found = "Yes"
-                        break
-            found_lines[line_key] = found
+        elif response.status_code == 404:
+            # Handle 404 Not Found error
+            for line_key in lines_to_check.keys():
+                found_lines[line_key] = "404 Not Found"
+        
+        elif response.status_code == 403:
+            # Handle 403 Forbidden error (often a bot block)
+            for line_key in lines_to_check.keys():
+                found_lines[line_key] = "403 Forbidden"
+        
+        else:
+            # Handle any other HTTP errors
+            for line_key in lines_to_check.keys():
+                found_lines[line_key] = f"HTTP Error {response.status_code}"
+            
+    except requests.exceptions.Timeout:
+        # Handle timeout error
+        for line_key in lines_to_check.keys():
+            found_lines[line_key] = "Request Timeout"
+            
+    except requests.exceptions.ConnectionError:
+        # Handle DNS errors or other connection issues
+        for line_key in lines_to_check.keys():
+            found_lines[line_key] = "Connection Error"
             
     except requests.exceptions.RequestException as e:
-        # Handle network errors, timeouts, and non-200 responses
-        st.error(f"Error fetching from {url}: {e}")
+        # Catch-all for any other request-related errors
+        st.error(f"An unexpected error occurred for {url}: {e}")
         for line_key in lines_to_check.keys():
-            found_lines[line_key] = "Error"
+            found_lines[line_key] = "Unknown Error"
 
     return found_lines
 
 # --- Streamlit App UI ---
 st.title("Ads.txt / App-Ads.txt Checker")
-st.markdown("Use this app to validate `ads.txt` or `app-ads.txt` files across multiple domains.")
+st.markdown("This tool checks for `ads.txt` or `app-ads.txt` files and their specified lines across multiple domains. It uses a **User-Agent** to prevent being blocked.")
 
-# --- Inputs ---
+st.markdown("---")
+
 st.subheader("1. Domains List")
 st.info("Paste one domain per line (e.g., `google.com`, `nytimes.com`).")
 domains_input = st.text_area("Domains to check", height=150, placeholder="Enter domains here...")
@@ -76,17 +106,14 @@ if st.button("Run Check"):
     if not domains_input or not lines_input:
         st.warning("Please enter both domains and lines to check.")
     else:
-        # Parse inputs
         domains = [d.strip() for d in domains_input.splitlines() if d.strip()]
         lines = [l.strip() for l in lines_input.splitlines() if l.strip()]
         
         if not domains or not lines:
             st.warning("The domains or lines list is empty after parsing. Please check your input.")
         else:
-            # Parse lines to check into a structured dictionary
             parsed_lines = {}
             for i, line in enumerate(lines):
-                # Split by comma or space and clean parts
                 parts = [p.strip().lower() for p in line.replace(',', ' ').split() if p.strip()]
                 if len(parts) >= 2:
                     parsed_lines[f"Line {i+1}: {' '.join(parts)}"] = parts
@@ -98,14 +125,12 @@ if st.button("Run Check"):
             else:
                 st.subheader("Results")
                 
-                # Create a DataFrame to hold results
                 results_df = pd.DataFrame(index=domains)
                 for line_name in parsed_lines.keys():
                     results_df[line_name] = "Pending"
                     
                 progress_bar = st.progress(0)
                 
-                # Process each domain and update the DataFrame
                 for i, domain in enumerate(domains):
                     domain_results = check_ads_file(domain, parsed_lines, file_type)
                     
@@ -116,7 +141,6 @@ if st.button("Run Check"):
                     
                 st.dataframe(results_df)
 
-                # --- Output CSV ---
                 csv_buffer = io.StringIO()
                 results_df.to_csv(csv_buffer)
                 csv_bytes = csv_buffer.getvalue().encode('utf-8')
