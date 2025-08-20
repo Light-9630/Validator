@@ -1,153 +1,79 @@
 import streamlit as st
-import requests
 import pandas as pd
-import io
+import requests
+from io import StringIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Function to fetch and check the ads.txt/app-ads.txt file
-def check_ads_file(domain, lines_to_check, file_type):
-    """
-    Fetches the ads/app-ads file using a User-Agent and provides detailed error handling.
-    """
-    
-    # Use a standard browser User-Agent to avoid 403 Forbidden errors
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
+st.set_page_config(page_title="Ads.txt / App-Ads.txt Checker", layout="wide")
+st.title("📄 Ads.txt / App-Ads.txt Bulk Checker")
 
-    # Standardize the domain URL, prioritizing HTTPS
-    if not domain.startswith('http'):
-        url = f"https://{domain}/{file_type}"
-    else:
-        url = f"{domain}/{file_type}"
-    
-    found_lines = {}
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        # Check HTTP status code for specific errors
-        if response.status_code == 200:
-            file_content = response.text
-            
-            # Perform the content check
-            for line_key, line_parts in lines_to_check.items():
-                found = "No"
-                for file_line in file_content.splitlines():
-                    if not file_line.strip() or file_line.startswith('#'):
-                        continue
-                    
-                    normalized_file_line = ' '.join(file_line.strip().split()).lower()
-                    
-                    if len(line_parts) >= 3 and len(normalized_file_line.split()) >= 3:
-                        if normalized_file_line.startswith(f"{line_parts[0]} {line_parts[1]} {line_parts[2]}"):
-                            found = "Yes"
-                            break
-                    elif len(line_parts) >= 2:
-                        if normalized_file_line.startswith(f"{line_parts[0]} {line_parts[1]}"):
-                            found = "Yes"
-                            break
-                found_lines[line_key] = found
-        
-        elif response.status_code == 404:
-            # Handle 404 Not Found error
-            for line_key in lines_to_check.keys():
-                found_lines[line_key] = "404 Not Found"
-        
-        elif response.status_code == 403:
-            # Handle 403 Forbidden error (often a bot block)
-            for line_key in lines_to_check.keys():
-                found_lines[line_key] = "403 Forbidden"
-        
-        else:
-            # Handle any other HTTP errors
-            for line_key in lines_to_check.keys():
-                found_lines[line_key] = f"HTTP Error {response.status_code}"
-            
-    except requests.exceptions.Timeout:
-        # Handle timeout error
-        for line_key in lines_to_check.keys():
-            found_lines[line_key] = "Request Timeout"
-            
-    except requests.exceptions.ConnectionError:
-        # Handle DNS errors or other connection issues
-        for line_key in lines_to_check.keys():
-            found_lines[line_key] = "Connection Error"
-            
-    except requests.exceptions.RequestException as e:
-        # Catch-all for any other request-related errors
-        st.error(f"An unexpected error occurred for {url}: {e}")
-        for line_key in lines_to_check.keys():
-            found_lines[line_key] = "Unknown Error"
+# === INPUT TEXT AREA ===
+st.write("Paste your lines below (format: `domain, id, relation(optional)`)")
 
-    return found_lines
+user_input = st.text_area("Input Lines", height=200, placeholder="pubmatic.com, 166253, DIRECT\nkrushmedia.com, AJxF6R667a9M6CaTvK")
 
-# --- Streamlit App UI ---
-st.title("Ads.txt / App-Ads.txt Checker")
-st.markdown("This tool checks for `ads.txt` or `app-ads.txt` files and their specified lines across multiple domains. It uses a **User-Agent** to prevent being blocked.")
+if user_input.strip():
+    # Split into rows and columns
+    data = []
+    for line in user_input.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        # Ensure 3 columns
+        while len(parts) < 3:
+            parts.append("")
+        data.append(parts[:3])
 
-st.markdown("---")
+    df = pd.DataFrame(data, columns=["Domain", "Publisher ID", "Relation"])
+    st.write("### ✍️ Editable Input Table")
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
 
-st.subheader("1. Domains List")
-st.info("Paste one domain per line (e.g., `google.com`, `nytimes.com`).")
-domains_input = st.text_area("Domains to check", height=150, placeholder="Enter domains here...")
-st.markdown("---")
+    # === OPTIONS ===
+    col1, col2 = st.columns(2)
+    with col1:
+        file_type = st.radio("File to check", ["ads.txt", "app-ads.txt"], horizontal=True)
+    with col2:
+        match_mode = st.radio("Match Mode", ["Strict (3 parts)", "Flexible (Domain + ID only)"], horizontal=True)
 
-st.subheader("2. Lines to Check")
-st.info("Paste the lines to check. The app will automatically split them into parts.")
-lines_input = st.text_area("Lines to check", height=150, placeholder="Example: `google.com, pub-1234567890, DIRECT`\n`app-ads.com, 98765, RESELLER`")
-st.markdown("---")
+    threads = st.slider("⚙️ Number of threads", 1, 20, 5)
 
-st.subheader("3. Select File Type")
-file_type = st.radio("Choose the file to check", ("ads.txt", "app-ads.txt"))
-st.markdown("---")
+    if st.button("🚀 Run Checker"):
+        results = []
 
-# --- App Logic ---
-if st.button("Run Check"):
-    if not domains_input or not lines_input:
-        st.warning("Please enter both domains and lines to check.")
-    else:
-        domains = [d.strip() for d in domains_input.splitlines() if d.strip()]
-        lines = [l.strip() for l in lines_input.splitlines() if l.strip()]
-        
-        if not domains or not lines:
-            st.warning("The domains or lines list is empty after parsing. Please check your input.")
-        else:
-            parsed_lines = {}
-            for i, line in enumerate(lines):
-                parts = [p.strip().lower() for p in line.replace(',', ' ').split() if p.strip()]
-                if len(parts) >= 2:
-                    parsed_lines[f"Line {i+1}: {' '.join(parts)}"] = parts
-                else:
-                    st.error(f"Skipping malformed line: '{line}'. A line must have at least two parts (domain, ID).")
-            
-            if not parsed_lines:
-                st.error("No valid lines were found to check. Please re-enter the lines.")
-            else:
-                st.subheader("Results")
-                
-                results_df = pd.DataFrame(index=domains)
-                for line_name in parsed_lines.keys():
-                    results_df[line_name] = "Pending"
-                    
-                progress_bar = st.progress(0)
-                
-                for i, domain in enumerate(domains):
-                    domain_results = check_ads_file(domain, parsed_lines, file_type)
-                    
-                    for line_name, status in domain_results.items():
-                        results_df.loc[domain, line_name] = status
-                    
-                    progress_bar.progress((i + 1) / len(domains))
-                    
-                st.dataframe(results_df)
+        def check_line(row):
+            domain, pub_id, relation = row["Domain"], row["Publisher ID"], row["Relation"]
+            url = f"http://{domain}/{file_type}"
+            try:
+                resp = requests.get(url, timeout=10)
+                if resp.status_code != 200:
+                    return [domain, pub_id, relation, "❌ No file"]
 
-                csv_buffer = io.StringIO()
-                results_df.to_csv(csv_buffer)
-                csv_bytes = csv_buffer.getvalue().encode('utf-8')
-                
-                st.download_button(
-                    label="Download Results as CSV",
-                    data=csv_bytes,
-                    file_name=f"ads_txt_check_results_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                )
+                found = False
+                for line in resp.text.splitlines():
+                    parts = [p.strip() for p in line.split(",")]
+                    if len(parts) >= 2:
+                        if match_mode.startswith("Strict"):
+                            if len(parts) >= 3 and parts[0] == domain and parts[1] == pub_id and parts[2].upper() == relation.upper():
+                                found = True
+                                break
+                        else:  # Flexible
+                            if parts[0] == domain and parts[1] == pub_id:
+                                found = True
+                                break
+
+                return [domain, pub_id, relation, "✅ Yes" if found else "❌ No"]
+
+            except Exception as e:
+                return [domain, pub_id, relation, f"⚠️ Error: {str(e)}"]
+
+        # Run in parallel
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            futures = [executor.submit(check_line, row) for _, row in edited_df.iterrows()]
+            for f in as_completed(futures):
+                results.append(f.result())
+
+        result_df = pd.DataFrame(results, columns=["Domain", "Publisher ID", "Relation", "Result"])
+        st.write("### ✅ Results")
+        st.dataframe(result_df, use_container_width=True)
+
+        # Download CSV
+        csv = result_df.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Download Results CSV", csv, "results.csv", "text/csv")
