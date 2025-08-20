@@ -3,113 +3,93 @@ import pandas as pd
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-import io
+import io, time
 from requests.adapters import HTTPAdapter, Retry
 
 # === PAGE CONFIG ===
-st.set_page_config(page_title="Ads.txt / App-Ads.txt Bulk Checker", layout="wide")
-st.title("📄 Ads.txt / App-Ads.txt Bulk Checker")
+st.set_page_config(page_title="Ads.txt / App-Ads.txt Triplet Checker", layout="wide")
+st.title("📄 Ads.txt / App-Ads.txt Triplet Checker")
 
-# === INPUT: THREAD COUNT ===
-threads = st.number_input("⚙ Number of threads", min_value=1, max_value=50, value=10)
+# === SETTINGS ===
+threads = st.number_input("⚙ Number of threads", min_value=1, max_value=30, value=10)
 
-# === INPUT: BULK PASTE ===
-paste_input = st.text_area("📋 Paste domains (one per line)", height=200)
+# === USER INPUT ===
+domains_text = st.text_area("🌍 Enter domains (one per line)", height=150, placeholder="example.com\ndailymotion.com\n...")
+lines_text = st.text_area("🔍 Enter triplets (domain, id, relation) one per line", height=150,
+                          placeholder="google.com, pub-1234567890, DIRECT\nopenx.com, 98765, RESELLER\n...")
 
-# === INPUT: FILE UPLOAD ===
-uploaded_file = st.file_uploader("📂 Or upload a file (.txt or .csv)", type=["txt", "csv"])
+if st.button("Run Check ✅"):
+    start_time = time.time()
 
-# === TARGET LINES TO SEARCH ===
-lines_input = st.text_area("🔍 Lines to search (one per line)", height=150)
-
-# === CHECKBOX OPTIONS ===
-check_ads = st.checkbox("Check ads.txt", value=True)
-check_app_ads = st.checkbox("Check app-ads.txt", value=True)
-
-if not check_ads and not check_app_ads:
-    st.warning("⚠ Please select at least one option (ads.txt or app-ads.txt)")
-
-# === PARSE INPUT DOMAINS ===
-domains = []
-if paste_input.strip():
-    domains += [d.strip() for d in paste_input.strip().split("\n") if d.strip()]
-
-if uploaded_file:
-    if uploaded_file.name.endswith(".txt"):
-        domains += [line.strip() for line in uploaded_file.read().decode().split("\n") if line.strip()]
-    elif uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-        for col in df.columns:
-            domains += [str(x).strip() for x in df[col] if str(x).strip()]
-
-domains = list(set(domains))  # remove duplicates
-
-# === PREPARE LINES TO SEARCH ===
-search_lines = [line.strip() for line in lines_input.strip().split("\n") if line.strip()]
-
-# === HTTP SESSION WITH RETRIES ===
-session = requests.Session()
-retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
-session.mount("http://", HTTPAdapter(max_retries=retries))
-session.mount("https://", HTTPAdapter(max_retries=retries))
-
-# === FETCH ADS.TXT / APP-ADS.TXT ===
-def fetch_ads(domain):
-    urls = []
-    if check_ads:
-        urls.extend([
-            f"https://{domain}/ads.txt",
-            f"http://{domain}/ads.txt"
-        ])
-    if check_app_ads:
-        urls.extend([
-            f"https://{domain}/app-ads.txt",
-            f"http://{domain}/app-ads.txt"
-        ])
-
-    for url in urls:
-        try:
-            r = session.get(url, timeout=5)
-            if r.status_code == 200 and len(r.text) > 0:
-                return domain, url, r.text.lower()
-        except requests.RequestException:
-            pass
-    return domain, None, None
-
-results = []
-if st.button("🚀 Run Check"):
+    # Prepare domain list
+    domains = [d.strip() for d in domains_text.splitlines() if d.strip()]
     if not domains:
-        st.error("❌ Please provide at least one domain.")
-    elif not search_lines:
-        st.error("❌ Please provide lines to search.")
-    elif not check_ads and not check_app_ads:
-        st.error("❌ Please select at least one option to check.")
-    else:
-        progress = st.progress(0)
-        data = []
+        st.error("❌ Please enter at least one domain.")
+        st.stop()
 
-        with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures = {executor.submit(fetch_ads, d): d for d in domains}
-            total = len(futures)
-            for i, future in enumerate(as_completed(futures)):
-                domain, url, content = future.result()
-                row = {"Domain": domain, "File Checked": url if url else "Not Found"}
-                for line in search_lines:
-                    if content and line.lower() in content:
-                        row[line] = "Yes"
-                    else:
-                        row[line] = "No"
-                data.append(row)
-                progress.progress((i + 1) / total)
+    # Prepare triplets list
+    triplets = []
+    for line in lines_text.splitlines():
+        parts = [p.strip() for p in line.split(",") if p.strip()]
+        if len(parts) >= 3:  # take only first 3
+            triplets.append((parts[0], parts[1], parts[2]))
 
-        df_out = pd.DataFrame(data)
-        st.dataframe(df_out)
+    if not triplets:
+        st.error("❌ Please enter at least one valid triplet (domain, id, relation).")
+        st.stop()
 
-        # === DOWNLOAD CSV ===
-        csv = df_out.to_csv(index=False)
-        st.download_button(
-            label="📥 Download CSV",
-            data=csv,
-            file_name=f"ads_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
+    # === HTTP Session with Retry ===
+    session = requests.Session()
+    retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    def fetch_ads(domain):
+        urls = [f"https://{domain}/ads.txt", f"http://{domain}/ads.txt",
+                f"https://{domain}/app-ads.txt", f"http://{domain}/app-ads.txt"]
+        for url in urls:
+            try:
+                r = session.get(url, timeout=8)
+                if r.status_code == 200 and "DIRECT" in r.text.upper():  # quick filter
+                    return domain, r.text.splitlines()
+            except:
+                continue
+        return domain, []
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = {executor.submit(fetch_ads, d): d for d in domains}
+        for f in as_completed(futures):
+            domain, lines = f.result()
+            results[domain] = lines
+
+    # === PROCESSING ===
+    data = []
+    for domain, ads_lines in results.items():
+        row = {"domain": domain}
+        ads_lines_clean = [line.strip().lower() for line in ads_lines if line.strip() and not line.startswith("#")]
+
+        for triplet in triplets:
+            d, i, r = [x.lower() for x in triplet]
+            found = any(
+                (d in line and i in line and r in line)
+                for line in ads_lines_clean
+            )
+            key = f"{triplet[0]}, {triplet[1]}, {triplet[2]}"
+            row[key] = "✅ YES" if found else "❌ NO"
+        data.append(row)
+
+    df = pd.DataFrame(data)
+
+    # === SHOW RESULTS ===
+    st.subheader("📊 Results")
+    st.dataframe(df, use_container_width=True)
+
+    # Export
+    filename = f"ads_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    csv_buf = io.StringIO()
+    df.to_csv(csv_buf, index=False)
+    st.download_button("📥 Download CSV", data=csv_buf.getvalue(), file_name=filename, mime="text/csv")
+
+    st.success(f"✅ Completed in {time.time() - start_time:.2f} seconds")
