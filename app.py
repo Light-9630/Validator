@@ -172,3 +172,9 @@ if st.button("Start Checking"):
 
 st.markdown("---")
 st.markdown("Built with Streamlit by a helpful AI assistant.")
+<br>
+
+***
+
+Here's an instructional video that shows how to build an interactive ad-scraping web app with Streamlit and Python. [How to build an Interactive Ad-scraping Keyword Analysis Web App with Streamlit Python & ScraperAPI](https://www.youtube.com/watch?v=yb1OF33pNTQ). This video is relevant because it demonstrates building a similar Streamlit application that handles data scraping and analysis, which is conceptually related to the task of checking ads.txt files.
+http://googleusercontent.com/youtube_content/0
