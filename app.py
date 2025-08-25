@@ -4,15 +4,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from io import StringIO
-import json
-
-# Note: The sellers.json is provided in the query, but since it's truncated, this code assumes a general tool.
-# If needed, you can parse and auto-populate lines from a JSON string here.
-# For example:
-# sellers_json = '''{the json string}'''
-# data = json.loads(sellers_json)
-# Then generate lines like [f"{seller['domain']}, {seller['seller_id']}, {'DIRECT' if seller['seller_type'] == 'PUBLISHER' else 'RESELLER'}" for seller in data['sellers']]
-# But as per requirements, lines are user-input.
+import re
 
 st.title("🔥 Ads.txt / App-ads.txt Bulk Checker")
 
@@ -38,16 +30,26 @@ if domains:
 
 # Input for search lines
 st.header("Search Lines")
-line_input = st.text_area("Paste search lines (one per line)", height=150)
+line_input = st.text_area("Paste search lines (one per line, elements comma-separated)", height=150)
 lines = [l.strip() for l in line_input.split('\n') if l.strip()]
 
-# Lines management
+# Lines management with element-wise case sensitivity
 case_sensitives = {}
+line_elements = {}
 if lines:
     st.subheader("Lines Management")
-    select_all_case = st.checkbox("Select all as case-sensitive")
+    select_all_case = st.checkbox("Select all elements as case-sensitive")
     for line in lines:
-        case_sensitives[line] = st.checkbox(f"Case-sensitive for: {line}", value=select_all_case, key=f"case_{line}")
+        elements = [e.strip() for e in line.split(',') if e.strip()]
+        line_elements[line] = elements
+        case_sensitives[line] = {}
+        st.write(f"Elements for line: {line}")
+        for element in elements:
+            case_sensitives[line][element] = st.checkbox(
+                f"Case-sensitive for element: {element}",
+                value=select_all_case,
+                key=f"case_{line}_{element}"
+            )
     st.write(" ")  # Spacer
 
 # Start checking button
@@ -78,6 +80,23 @@ if st.button("Start Checking") and domains and lines:
             time.sleep(2 ** attempt)  # Exponential backoff
         return None, error
     
+    def check_line_in_content(content, line_elements, case_sensitives_line):
+        content_lines = content.split('\n')
+        for content_line in content_lines:
+            content_line = content_line.strip()
+            if not content_line or content_line.startswith('#'):
+                continue
+            all_elements_found = True
+            for element in line_elements:
+                element_pattern = re.escape(element) if case_sensitives_line[element] else re.escape(element).lower()
+                content_to_search = content_line if case_sensitives_line[element] else content_line.lower()
+                if not re.search(r'\b' + element_pattern + r'\b', content_to_search):
+                    all_elements_found = False
+                    break
+            if all_elements_found:
+                return True
+        return False
+    
     with ThreadPoolExecutor(max_workers=20) as executor:
         future_to_domain = {executor.submit(fetch_with_retry, domain): domain for domain in domains}
         processed = 0
@@ -90,10 +109,7 @@ if st.button("Start Checking") and domains and lines:
                     results[line][domains.index(domain)] = "Error"
             else:
                 for line in lines:
-                    if case_sensitives[line]:
-                        found = line in content
-                    else:
-                        found = line.lower() in content.lower()
+                    found = check_line_in_content(content, line_elements[line], case_sensitives[line])
                     results[line][domains.index(domain)] = "Yes" if found else "No"
             
             processed += 1
