@@ -2,122 +2,123 @@ import streamlit as st
 import pandas as pd
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-import io, time
-from requests.adapters import HTTPAdapter, Retry
+import time
+from io import StringIO
+import json
 
-# === PAGE CONFIG ===
-st.set_page_config(page_title="Ads.txt / App-Ads.txt Checker", layout="wide")
-st.title("📄 Ads.txt / App-Ads.txt Bulk Checker")
+# Note: The sellers.json is provided in the query, but since it's truncated, this code assumes a general tool.
+# If needed, you can parse and auto-populate lines from a JSON string here.
+# For example:
+# sellers_json = '''{the json string}'''
+# data = json.loads(sellers_json)
+# Then generate lines like [f"{seller['domain']}, {seller['seller_id']}, {'DIRECT' if seller['seller_type'] == 'PUBLISHER' else 'RESELLER'}" for seller in data['sellers']]
+# But as per requirements, lines are user-input.
 
-# === SETTINGS ===
-threads = st.number_input("⚙ Number of threads", min_value=1, max_value=20, value=5)
+st.title("🔥 Ads.txt / App-ads.txt Bulk Checker")
 
-# === FILE OR PASTE INPUT ===
-uploaded_file = st.file_uploader("Upload ads.txt / app-ads.txt file", type=["txt", "csv"])
-pasted_text = st.text_area("Or paste domains here (one per line)", height=150)
+# Select file type
+file_type = st.selectbox("Select file type to check", ["ads.txt", "app-ads.txt"])
+
+# Input for domains
+st.header("Input Domains")
+domain_input = st.text_area("Paste domains (one per line)", height=150)
+uploaded_file = st.file_uploader("Or upload CSV/TXT file with domains (one per line)", type=["csv", "txt"])
 
 domains = []
-if uploaded_file:
-    domains = [line.strip() for line in uploaded_file.read().decode("utf-8").splitlines() if line.strip()]
-elif pasted_text:
-    domains = [line.strip() for line in pasted_text.splitlines() if line.strip()]
+if domain_input:
+    domains = [d.strip() for d in domain_input.split('\n') if d.strip()]
+if uploaded_file is not None:
+    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+    uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
+    domains.extend(uploaded_domains)
+domains = list(set(domains))  # Remove duplicates
 
-# === SEARCH INPUT ===
-lines_text = st.text_area("Paste lines to search (one per line)", height=150)
-search_lines = [line.strip() for line in lines_text.splitlines() if line.strip()]
+if domains:
+    st.write(f"{len(domains)} unique domains loaded.")
 
-# === HEADER OPTIONS ABOVE PREVIEW ===
-st.subheader("🔎 Preview Settings")
-case_sensitive = {
-    i: st.checkbox(f"Case Sensitive for Part {i+1}", value=False, key=f"cs_{i}")
-    for i in range(4)
-}
+# Input for search lines
+st.header("Search Lines")
+line_input = st.text_area("Paste search lines (one per line)", height=150)
+lines = [l.strip() for l in line_input.split('\n') if l.strip()]
 
-# === FUNCTION TO FETCH ADS.TXT ===
-def fetch_ads(domain):
-    urls = [f"https://{domain}/ads.txt", f"https://{domain}/app-ads.txt"]
-    session = requests.Session()
-    retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[500,502,503,504])
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
+# Lines management
+case_sensitives = {}
+if lines:
+    st.subheader("Lines Management")
+    select_all_case = st.checkbox("Select all as case-sensitive")
+    for line in lines:
+        case_sensitives[line] = st.checkbox(f"Case-sensitive for: {line}", value=select_all_case, key=f"case_{line}")
+    st.write(" ")  # Spacer
 
-    for url in urls:
-        try:
-            resp = session.get(url, timeout=5, headers={"User-Agent": "Mozilla/5.0"})
-            if resp.status_code == 200:
-                return resp.text.splitlines()
-        except Exception:
-            continue
-    return []
-
-# === FUNCTION TO CHECK MATCHES ===
-def check_domain(domain, search_lines):
-    ads_lines = fetch_ads(domain)
-    results = []
-    for line in search_lines:
-        parts = [p.strip() for p in line.split(",")]
-        found = False
-        for ad_line in ads_lines:
-            ad_parts = [p.strip() for p in ad_line.split(",")]
-            match = True
-            for i, part in enumerate(parts):
-                if i < len(ad_parts):
-                    if case_sensitive.get(i, False):
-                        if part != ad_parts[i]:
-                            match = False
-                            break
-                    else:
-                        if part.lower() != ad_parts[i].lower():
-                            match = False
-                            break
+# Start checking button
+if st.button("Start Checking") and domains and lines:
+    start_time = time.time()
+    
+    # Initialize results dict
+    results = {"Page": domains}
+    for line in lines:
+        results[line] = [""] * len(domains)
+    
+    errors = {}
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    def fetch_with_retry(domain, max_retries=3):
+        url = f"https://{domain}/{file_type}"
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, timeout=10)
+                if response.status_code == 200:
+                    return response.text, None
                 else:
-                    match = False
-                    break
-            if match:
-                found = True
-                break
-        results.append("YES" if found else "NO")
-    return [domain] + results
-
-# === RUN CHECK ===
-if st.button("Run Check"):
-    if not domains or not search_lines:
-        st.warning("Please provide both domains and search lines.")
-    else:
-        start_time = time.time()
-        results = []
-
-        progress_bar = st.progress(0)
-        total = len(domains)
-
-        with ThreadPoolExecutor(max_workers=threads) as executor:
-            futures = {executor.submit(check_domain, d, search_lines): d for d in domains}
-            for i, future in enumerate(as_completed(futures)):
-                try:
-                    results.append(future.result())
-                except Exception as e:
-                    results.append([futures[future]] + ["ERROR"] * len(search_lines))
-                progress_bar.progress((i + 1) / total)
-
-        elapsed_time = time.time() - start_time
-
-        # === TABLE PREVIEW ===
-        headers = ["Domain"] + search_lines
-        df = pd.DataFrame(results, columns=headers)
-        st.write("✅ Results Preview:")
-        st.dataframe(df)
-
-        # === DOWNLOAD ===
-        csv_buffer = io.StringIO()
-        df.to_csv(csv_buffer, index=False)
-        st.download_button(
-            label="📥 Download Results CSV",
-            data=csv_buffer.getvalue(),
-            file_name=f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
-
-        # === TIME TAKEN ===
-        st.success(f"⏱ Time taken: {elapsed_time:.2f} seconds")
+                    error = f"HTTP {response.status_code}"
+            except Exception as e:
+                error = str(e)
+            time.sleep(2 ** attempt)  # Exponential backoff
+        return None, error
+    
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_domain = {executor.submit(fetch_with_retry, domain): domain for domain in domains}
+        processed = 0
+        for future in as_completed(future_to_domain):
+            domain = future_to_domain[future]
+            content, err = future.result()
+            if err:
+                errors[domain] = err
+                for line in lines:
+                    results[line][domains.index(domain)] = "Error"
+            else:
+                for line in lines:
+                    if case_sensitives[line]:
+                        found = line in content
+                    else:
+                        found = line.lower() in content.lower()
+                    results[line][domains.index(domain)] = "Yes" if found else "No"
+            
+            processed += 1
+            progress_bar.progress(processed / len(domains))
+            status_text.text(f"Processed {processed}/{len(domains)} domains...")
+    
+    end_time = time.time()
+    st.success(f"Checking complete! Time taken: {end_time - start_time:.2f} seconds")
+    
+    # Display results table
+    st.subheader("Results")
+    df = pd.DataFrame(results)
+    st.table(df)
+    
+    # Download button
+    csv_data = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Download Results as CSV",
+        data=csv_data,
+        file_name="ads_txt_check_results.csv",
+        mime="text/csv"
+    )
+    
+    # Errors if any
+    if errors:
+        st.subheader("Errors")
+        error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
+        st.table(error_df)
