@@ -49,11 +49,12 @@ if lines:
         select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
         for line in lines:
             elements = [e.strip() for e in line.split(',') if e.strip()]
-            line_elements[line] = elements
+            # Exclude the last element if it’s a relation (e.g., DIRECT/RESELLER)
+            line_elements[line] = elements[:-1] if len(elements) > 2 else elements
             case_sensitives[line] = {}
             st.markdown(f"**Line: {line}**")
-            cols = st.columns(len(elements))
-            for i, element in enumerate(elements):
+            cols = st.columns(len(line_elements[line]))
+            for i, element in enumerate(line_elements[line]):
                 with cols[i]:
                     case_sensitives[line][element] = st.checkbox(
                         element,
