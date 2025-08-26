@@ -49,8 +49,8 @@ if lines:
         select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
         for line in lines:
             elements = [e.strip() for e in line.split(',') if e.strip()]
-            # Exclude the last element if it’s a relation (e.g., DIRECT/RESELLER)
-            line_elements[line] = elements[:-1] if len(elements) > 2 else elements
+            # ✅ Only keep first two fields (domain + seller id), skip relation
+            line_elements[line] = elements[:2]
             case_sensitives[line] = {}
             st.markdown(f"**Line: {line}**")
             cols = st.columns(len(line_elements[line]))
