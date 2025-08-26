@@ -8,7 +8,7 @@ import re
 
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
 
-st.title("🔥 Ads.txt / App-ads.txt Bulk Checker")
+st.title("Ads.txt / App-ads.txt Bulk Checker")
 
 # Use columns for better layout
 col1, col2 = st.columns(2)
@@ -207,3 +207,4 @@ if st.button("Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
+
