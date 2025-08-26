@@ -85,17 +85,44 @@ if st.button("Start Checking", disabled=not (domains and lines)):
     }
     
     def fetch_with_retry(domain, max_retries=3):
-        url = f"https://{domain}/{file_type}"
-        for attempt in range(max_retries):
-            try:
-                response = requests.get(url, headers=HEADERS, timeout=10)
-                if response.status_code == 200:
-                    return response.text, None
-                else:
-                    error = f"HTTP {response.status_code}"
-            except Exception as e:
-                error = str(e)
-            time.sleep(2 ** attempt)  # Exponential backoff
+        urls = [
+            f"https://{domain}/{file_type}",
+            f"http://{domain}/{file_type}"  # fallback to http if https fails
+        ]
+        error = None
+        for url in urls:
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(
+                        url,
+                        headers=HEADERS,
+                        timeout=10,
+                        allow_redirects=True,
+                        verify=True  # SSL verification
+                    )
+                    if response.status_code == 200:
+                        return response.text, None
+                    else:
+                        error = f"HTTP {response.status_code}"
+                except requests.exceptions.SSLError:
+                    # last chance, ignore SSL verification
+                    try:
+                        response = requests.get(
+                            url,
+                            headers=HEADERS,
+                            timeout=10,
+                            allow_redirects=True,
+                            verify=False
+                        )
+                        if response.status_code == 200:
+                            return response.text, None
+                        else:
+                            error = f"HTTP {response.status_code}"
+                    except Exception as e:
+                        error = str(e)
+                except Exception as e:
+                    error = str(e)
+                time.sleep(2 ** attempt)  # Exponential backoff
         return None, error
     
     def check_line_in_content(content, line_elements, case_sensitives_line):
