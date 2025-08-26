@@ -76,11 +76,19 @@ if st.button("Start Checking", disabled=not (domains and lines)):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
+    HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/114.0.0.0 Safari/537.36"
+        )
+    }
+    
     def fetch_with_retry(domain, max_retries=3):
         url = f"https://{domain}/{file_type}"
         for attempt in range(max_retries):
             try:
-                response = requests.get(url, timeout=10)
+                response = requests.get(url, headers=HEADERS, timeout=10)
                 if response.status_code == 200:
                     return response.text, None
                 else:
