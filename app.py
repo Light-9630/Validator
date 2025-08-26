@@ -44,17 +44,17 @@ lines = [l.strip() for l in line_input.split('\n') if l.strip()]
 # Lines management with element-wise case sensitivity
 case_sensitives = {}
 line_elements = {}
+
 if lines:
     with st.expander("Lines Management", expanded=True):
         select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
         for line in lines:
             elements = [e.strip() for e in line.split(',') if e.strip()]
-            # ✅ Only keep first two fields (domain + seller id), skip relation
-            line_elements[line] = elements[:2]
+            line_elements[line] = elements
             case_sensitives[line] = {}
             st.markdown(f"**Line: {line}**")
-            cols = st.columns(len(line_elements[line]))
-            for i, element in enumerate(line_elements[line]):
+            cols = st.columns(len(elements))
+            for i, element in enumerate(elements):
                 with cols[i]:
                     case_sensitives[line][element] = st.checkbox(
                         element,
@@ -87,7 +87,7 @@ if st.button("Start Checking", disabled=not (domains and lines)):
     def fetch_with_retry(domain, max_retries=3):
         urls = [
             f"https://{domain}/{file_type}",
-            f"http://{domain}/{file_type}"  # fallback to http if https fails
+            f"http://{domain}/{file_type}"
         ]
         error = None
         for url in urls:
@@ -98,14 +98,13 @@ if st.button("Start Checking", disabled=not (domains and lines)):
                         headers=HEADERS,
                         timeout=10,
                         allow_redirects=True,
-                        verify=True  # SSL verification
+                        verify=True
                     )
                     if response.status_code == 200:
                         return response.text, None
                     else:
                         error = f"HTTP {response.status_code}"
                 except requests.exceptions.SSLError:
-                    # last chance, ignore SSL verification
                     try:
                         response = requests.get(
                             url,
@@ -122,40 +121,65 @@ if st.button("Start Checking", disabled=not (domains and lines)):
                         error = str(e)
                 except Exception as e:
                     error = str(e)
-                time.sleep(2 ** attempt)  # Exponential backoff
+                time.sleep(2 ** attempt)
         return None, error
     
     def check_line_in_content(content, line_elements, case_sensitives_line):
         content_lines = content.split('\n')
-        for content_line in content_lines:
-            content_line = content_line.strip()
-            if not content_line or content_line.startswith('#'):
-                continue
-            all_elements_found = True
-            for element in line_elements:
-                element_pattern = re.escape(element) if case_sensitives_line[element] else re.escape(element).lower()
-                content_to_search = content_line if case_sensitives_line[element] else content_line.lower()
-                if not re.search(r'\b' + element_pattern + r'\b', content_to_search):
-                    all_elements_found = False
+        
+        # Regex to handle whitespace and comments
+        cleaned_content_lines = [
+            re.split(r'\s*#', content_line.strip())[0].strip()
+            for content_line in content_lines
+            if content_line.strip() and not content_line.strip().startswith('#')
+        ]
+
+        for cleaned_content_line in cleaned_content_lines:
+            content_line_elements = [e.strip() for e in cleaned_content_line.split(',')]
+            
+            all_elements_match = True
+            
+            for i, element_to_find in enumerate(line_elements):
+                if i >= len(content_line_elements):
+                    all_elements_match = False
                     break
-            if all_elements_found:
+                
+                content_element = content_line_elements[i]
+                
+                if case_sensitives_line.get(element_to_find, False):
+                    if element_to_find != content_element:
+                        all_elements_match = False
+                        break
+                else:
+                    if element_to_find.lower() != content_element.lower():
+                        all_elements_match = False
+                        break
+                        
+            if all_elements_match:
                 return True
         return False
     
     with ThreadPoolExecutor(max_workers=20) as executor:
         future_to_domain = {executor.submit(fetch_with_retry, domain): domain for domain in domains}
         processed = 0
+        
         for future in as_completed(future_to_domain):
             domain = future_to_domain[future]
-            content, err = future.result()
+            try:
+                content, err = future.result()
+            except Exception as e:
+                content, err = None, str(e)
+
             if err:
                 errors[domain] = err
                 for line in lines:
-                    results[line][domains.index(domain)] = "Error"
+                    if domain in domains: # Check if domain still exists in the original list
+                         results[line][domains.index(domain)] = "Error"
             else:
                 for line in lines:
-                    found = check_line_in_content(content, line_elements[line], case_sensitives[line])
-                    results[line][domains.index(domain)] = "Yes" if found else "No"
+                    if domain in domains:
+                        found = check_line_in_content(content, line_elements[line], case_sensitives[line])
+                        results[line][domains.index(domain)] = "Yes" if found else "No"
             
             processed += 1
             progress_bar.progress(processed / len(domains))
@@ -167,7 +191,7 @@ if st.button("Start Checking", disabled=not (domains and lines)):
     # Display results table
     st.subheader("Results")
     df = pd.DataFrame(results)
-    st.dataframe(df, use_container_width=True, height=400)  # Interactive dataframe with sorting
+    st.dataframe(df, use_container_width=True, height=400)
     
     # Download button
     csv_data = df.to_csv(index=False).encode('utf-8')
