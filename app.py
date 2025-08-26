@@ -8,46 +8,46 @@ import re
 import random
 
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
-st.title("🔥 Ads.txt / App-ads.txt Bulk Checker")
+st.title("Ads.txt / App-ads.txt Bulk Checker")
 
-# --- Input Columns ---
+# ---------------- Input Columns ----------------
 col1, col2 = st.columns(2)
+
 with col1:
     st.header("Input Domains")
     domain_input = st.text_area("Paste domains (one per line)", height=200)
-    uploaded_file = st.file_uploader("Or upload CSV/TXT file with domains (one per line)", type=["csv", "txt"])
+    uploaded_file = st.file_uploader("Or upload CSV/TXT file with domains", type=["csv","txt"])
 
 with col2:
     st.header("Search Lines")
-    line_input = st.text_area("Paste search lines (one per line, elements comma-separated)", height=200)
+    line_input = st.text_area("Paste search lines (one per line, CSV format)", height=200)
 
-# --- Process Domains ---
+# ---------------- Process Domains ----------------
 domains = []
 if domain_input:
-    domains = [d.strip() for d in domain_input.split('\n') if d.strip()]
-if uploaded_file is not None:
+    domains = [d.strip() for d in domain_input.splitlines() if d.strip()]
+if uploaded_file:
     stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
     uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
     domains.extend(uploaded_domains)
-domains = list(set(domains))  # remove duplicates
+domains = list(set(domains))
 if domains:
     st.info(f"{len(domains)} unique domains loaded.")
 
-# --- File type ---
-file_type = st.selectbox("Select file type to check", ["ads.txt", "app-ads.txt"])
+# ---------------- File type selection ----------------
+file_type = st.selectbox("Select file type", ["ads.txt","app-ads.txt"])
 
-# --- Process Lines ---
-lines = [l.strip() for l in line_input.split('\n') if l.strip()]
-
-# --- Lines Management with case sensitivity ---
+# ---------------- Process Lines ----------------
+lines = [l.strip() for l in line_input.splitlines() if l.strip()]
 case_sensitives = {}
 line_elements = {}
+
 if lines:
     with st.expander("Lines Management", expanded=True):
         select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
         for line in lines:
             elements = [e.strip() for e in line.split(',') if e.strip()]
-            # ✅ Only first 2 fields: domain + seller id
+            # ✅ Only first 2 fields
             line_elements[line] = elements[:2]
             case_sensitives[line] = {}
             st.markdown(f"**Line: {line}**")
@@ -60,7 +60,7 @@ if lines:
                         key=f"case_{line}_{element}"
                     )
 
-# --- User-Agent rotation for 403 fix ---
+# ---------------- User-Agent rotation ----------------
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
@@ -73,7 +73,7 @@ USER_AGENTS = [
     "(KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
 ]
 
-# --- Fetch with retry + redirects + SSL fallback ---
+# ---------------- Fetch with retry, redirects & SSL fallback ----------------
 def fetch_with_retry(domain, max_retries=3):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     error = None
@@ -89,7 +89,6 @@ def fetch_with_retry(domain, max_retries=3):
                 else:
                     error = f"HTTP {response.status_code}"
             except requests.exceptions.SSLError:
-                # retry ignoring SSL errors
                 try:
                     response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=False)
                     if response.status_code == 200:
@@ -105,22 +104,22 @@ def fetch_with_retry(domain, max_retries=3):
             time.sleep(2 ** attempt)
     return None, error
 
-# --- Check lines in content, limited to first 2 fields ---
+# ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
-    content_lines = content.split('\n')
-    cleaned_content_lines = [
-        re.split(r'\s*#', content_line.strip())[0].strip()
-        for content_line in content_lines
-        if content_line.strip() and not content_line.strip().startswith('#')
+    content_lines = content.splitlines()
+    cleaned_lines = [
+        re.split(r'\s*#', line.strip())[0].strip()
+        for line in content_lines
+        if line.strip() and not line.strip().startswith('#')
     ]
-    for cleaned_line in cleaned_content_lines:
-        content_line_elements = [e.strip() for e in cleaned_line.split(',')]
+    for c_line in cleaned_lines:
+        content_parts = [e.strip() for e in c_line.split(',')]
         all_match = True
         for i, element_to_find in enumerate(line_elements):
-            if i >= 2 or i >= len(content_line_elements):
+            if i >= 2 or i >= len(content_parts):
                 all_match = False
                 break
-            content_element = content_line_elements[i]
+            content_element = content_parts[i]
             if case_sensitives_line.get(element_to_find, False):
                 if element_to_find != content_element:
                     all_match = False
@@ -133,7 +132,7 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
             return True
     return False
 
-# --- Main checking ---
+# ---------------- Main Checking ----------------
 if st.button("Start Checking", disabled=not (domains and lines)):
     start_time = time.time()
     results = {"Page": domains}
@@ -175,12 +174,7 @@ if st.button("Start Checking", disabled=not (domains and lines)):
     
     # --- Download CSV ---
     csv_data = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="Download Results as CSV",
-        data=csv_data,
-        file_name="ads_txt_check_results.csv",
-        mime="text/csv"
-    )
+    st.download_button("Download Results as CSV", data=csv_data, file_name="ads_txt_check_results.csv", mime="text/csv")
     
     # --- Display Errors ---
     if errors:
