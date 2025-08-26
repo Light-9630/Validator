@@ -1,11 +1,113 @@
 import streamlit as st
 import pandas as pd
-import re
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+from io import StringIO
+import re
+import random
 
-st.set_page_config(page_title="ads.txt Line Checker", layout="wide")
+st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
+st.title("Ads.txt / App-ads.txt Bulk Checker")
 
-# ---------------- Helper Function ----------------
+# ---------------- Input Columns ----------------
+col1, col2 = st.columns(2)
+
+with col1:
+    st.header("Input Domains")
+    domain_input = st.text_area("Paste domains (one per line)", height=200)
+    uploaded_file = st.file_uploader("Or upload CSV/TXT file with domains", type=["csv","txt"])
+
+with col2:
+    st.header("Search Lines")
+    line_input = st.text_area("Paste search lines (one per line, CSV format)", height=200)
+
+# ---------------- Process Domains ----------------
+domains = []
+if domain_input:
+    domains = [d.strip() for d in domain_input.splitlines() if d.strip()]
+if uploaded_file:
+    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+    uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
+    domains.extend(uploaded_domains)
+domains = list(set(domains))
+if domains:
+    st.info(f"{len(domains)} unique domains loaded.")
+
+# ---------------- File type selection ----------------
+file_type = st.selectbox("Select file type", ["ads.txt","app-ads.txt"])
+
+# ---------------- Field Limit Selection ----------------
+field_limit = st.selectbox("Select number of fields to check", [2, 3, 4], index=0)
+
+# ---------------- Process Lines ----------------
+lines = [l.strip() for l in line_input.splitlines() if l.strip()]
+case_sensitives = {}
+line_elements = {}
+
+if lines:
+    with st.expander("Lines Management", expanded=True):
+        select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
+        for line in lines:
+            elements = [e.strip() for e in line.split(',') if e.strip()]
+            # ✅ Limit fields dynamically based on user selection
+            line_elements[line] = elements[:field_limit]
+            case_sensitives[line] = {}
+            st.markdown(f"**Line: {line}**")
+            cols = st.columns(len(line_elements[line]))
+            for i, element in enumerate(line_elements[line]):
+                with cols[i]:
+                    case_sensitives[line][element] = st.checkbox(
+                        element,
+                        value=select_all_case,
+                        key=f"case_{line}_{element}"
+                    )
+
+# ---------------- User-Agent rotation ----------------
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/16.0 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
+]
+
+# ---------------- Fetch with retry, redirects & SSL fallback ----------------
+def fetch_with_retry(domain, max_retries=3):
+    urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
+    error = None
+    for url in urls:
+        for attempt in range(max_retries):
+            headers = {"User-Agent": random.choice(USER_AGENTS)}
+            try:
+                response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=True)
+                if response.status_code == 200:
+                    return response.text, None
+                elif response.status_code == 403:
+                    return None, f"HTTP {response.status_code} (Forbidden)"
+                else:
+                    error = f"HTTP {response.status_code}"
+            except requests.exceptions.SSLError:
+                try:
+                    response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=False)
+                    if response.status_code == 200:
+                        return response.text, None
+                    elif response.status_code == 403:
+                        return None, f"HTTP {response.status_code} (Forbidden)"
+                    else:
+                        error = f"HTTP {response.status_code}"
+                except Exception as e:
+                    error = str(e)
+            except Exception as e:
+                error = str(e)
+            time.sleep(2 ** attempt)
+    return None, error
+
+# ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
     content_lines = content.splitlines()
     cleaned_lines = [
@@ -15,10 +117,11 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
     ]
     for c_line in cleaned_lines:
         content_parts = [e.strip() for e in c_line.split(',')]
-        if len(content_parts) < len(line_elements):
-            continue
         all_match = True
         for i, element_to_find in enumerate(line_elements):
+            if i >= len(content_parts):
+                all_match = False
+                break
             content_element = content_parts[i]
             if case_sensitives_line.get(element_to_find, False):
                 if element_to_find != content_element:
@@ -32,107 +135,52 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
             return True
     return False
 
-# ---------------- UI ----------------
-st.title("🔍 Ads.txt Line Checker")
-
-# Field selection
-st.subheader("Search Settings")
-field_limit = st.selectbox(
-    "Select how many fields to check",
-    options=[2, 3, 4],
-    index=0,  # default 2
-    help="By default checks Domain + Seller ID (2 fields). You can extend to Type (3) or Cert Authority ID (4)."
-)
-
-# Input lines
-line_input = st.text_area("Enter lines to search (one per line, comma-separated):")
-
-# Upload / paste domains
-st.subheader("Domains Input")
-domain_file = st.file_uploader("Upload a file with domains (one per line):", type=["txt", "csv"])
-domain_text = st.text_area("Or paste domains here (one per line):")
-
-# ---------------- Process Lines ----------------
-lines = [l.strip() for l in line_input.splitlines() if l.strip()]
-case_sensitives = {}
-line_elements = {}
-
-if lines:
-    with st.expander("Lines Management", expanded=True):
-        select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
-        for line in lines:
-            elements = [e.strip() for e in line.split(',') if e.strip()]
-            # ✅ Limit fields dynamically
-            line_elements[line] = elements[:field_limit]
-            case_sensitives[line] = {}
-            st.markdown(f"**Line: {line}**")
-            cols = st.columns(len(line_elements[line]))
-            for i, element in enumerate(line_elements[line]):
-                with cols[i]:
-                    case_sensitives[line][element] = st.checkbox(
-                        element,
-                        value=select_all_case,
-                        key=f"case_{line}_{element}"
-                    )
-
-# ---------------- Domains ----------------
-domains = []
-if domain_file:
-    if domain_file.name.endswith("csv"):
-        df = pd.read_csv(domain_file, header=None)
-        domains = df[0].astype(str).tolist()
-    else:
-        domains = domain_file.read().decode("utf-8").splitlines()
-
-if domain_text:
-    domains += [d.strip() for d in domain_text.splitlines() if d.strip()]
-
-domains = list(set(domains))  # remove duplicates
-
-# ---------------- Run Check ----------------
-if st.button("Run Check"):
-    if not lines:
-        st.error("Please enter at least one line to search.")
-    elif not domains:
-        st.error("Please upload or paste at least one domain.")
-    else:
-        results = []
-        start_time = time.time()
-        progress = st.progress(0)
-        status_text = st.empty()
-
-        for i, domain in enumerate(domains):
+# ---------------- Main Checking ----------------
+if st.button("Start Checking", disabled=not (domains and lines)):
+    start_time = time.time()
+    results = {"Page": domains}
+    for line in lines:
+        results[line] = [""] * len(domains)
+    errors = {}
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_domain = {executor.submit(fetch_with_retry, domain): domain for domain in domains}
+        processed = 0
+        for future in as_completed(future_to_domain):
+            domain = future_to_domain[future]
             try:
-                import requests
-                url = f"http://{domain}/ads.txt"
-                resp = requests.get(url, timeout=10)
-                if resp.status_code == 200:
-                    content = resp.text
-                    for line in lines:
-                        found = check_line_in_content(content, line_elements[line], case_sensitives[line])
-                        results.append({"Domain": domain, "Line": line, "Found": "Yes" if found else "No"})
-                else:
-                    for line in lines:
-                        results.append({"Domain": domain, "Line": line, "Found": f"Error {resp.status_code}"})
+                content, err = future.result()
             except Exception as e:
+                content, err = None, str(e)
+            if err:
+                errors[domain] = err
                 for line in lines:
-                    results.append({"Domain": domain, "Line": line, "Found": f"Error: {e}"})
-
-            progress.progress((i + 1) / len(domains))
-            status_text.text(f"Processed {i+1}/{len(domains)} domains...")
-
-        elapsed = time.time() - start_time
-        status_text.text(f"Completed in {elapsed:.2f} seconds ✅")
-
-        if results:
-            df = pd.DataFrame(results)
-            st.dataframe(df)
-
-            # Download option
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="📥 Download results as CSV",
-                data=csv,
-                file_name="ads_check_results.csv",
-                mime="text/csv",
-            )
+                    results[line][domains.index(domain)] = "Error"
+            else:
+                for line in lines:
+                    found = check_line_in_content(content, line_elements[line], case_sensitives[line])
+                    results[line][domains.index(domain)] = "Yes" if found else "No"
+            processed += 1
+            progress_bar.progress(processed / len(domains))
+            status_text.text(f"Processed {processed}/{len(domains)} domains...")
+    
+    end_time = time.time()
+    st.success(f"Checking complete! Time taken: {end_time - start_time:.2f} seconds")
+    
+    # --- Display results ---
+    st.subheader("Results")
+    df = pd.DataFrame(results)
+    st.dataframe(df, use_container_width=True, height=400)
+    
+    # --- Download CSV ---
+    csv_data = df.to_csv(index=False).encode('utf-8')
+    st.download_button("Download Results as CSV", data=csv_data, file_name="ads_txt_check_results.csv", mime="text/csv")
+    
+    # --- Display Errors ---
+    if errors:
+        st.subheader("Errors")
+        error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
+        st.dataframe(error_df, use_container_width=True)
