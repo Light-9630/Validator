@@ -102,6 +102,9 @@ if st.button("Start Checking", disabled=not (domains and lines)):
                     )
                     if response.status_code == 200:
                         return response.text, None
+                    elif response.status_code == 403:
+                        # If a 403 is received, return it as an error but stop retrying for this URL
+                        return None, f"HTTP {response.status_code} (Forbidden)"
                     else:
                         error = f"HTTP {response.status_code}"
                 except requests.exceptions.SSLError:
@@ -115,6 +118,8 @@ if st.button("Start Checking", disabled=not (domains and lines)):
                         )
                         if response.status_code == 200:
                             return response.text, None
+                        elif response.status_code == 403:
+                            return None, f"HTTP {response.status_code} (Forbidden)"
                         else:
                             error = f"HTTP {response.status_code}"
                     except Exception as e:
@@ -173,8 +178,8 @@ if st.button("Start Checking", disabled=not (domains and lines)):
             if err:
                 errors[domain] = err
                 for line in lines:
-                    if domain in domains: # Check if domain still exists in the original list
-                         results[line][domains.index(domain)] = "Error"
+                    if domain in domains:
+                        results[line][domains.index(domain)] = "Error"
             else:
                 for line in lines:
                     if domain in domains:
@@ -207,4 +212,3 @@ if st.button("Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
-
