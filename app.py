@@ -61,6 +61,21 @@ if lines:
                         key=f"case_{line}_{element}"
                     )
 
+# ---------------- Sidebar: Proxy + UA Mode ----------------
+st.sidebar.header("Settings")
+
+proxy_input = st.sidebar.text_input(
+    "Proxy (optional)",
+    placeholder="http://user:pass@host:port OR http://host:port"
+)
+proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
+
+ua_choice = st.sidebar.radio(
+    "User-Agent Mode",
+    ["Live Browser UA", "AdsBot-Google UA"],
+    index=0
+)
+
 # ---------------- Fetch Live UA ----------------
 def get_live_ua():
     try:
@@ -69,8 +84,12 @@ def get_live_ua():
     except:
         return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
 
-LIVE_UA = get_live_ua()
-st.sidebar.write(f"Using Live User-Agent: {LIVE_UA}")
+if ua_choice == "Live Browser UA":
+    LIVE_UA = get_live_ua()
+else:
+    LIVE_UA = "Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)"
+
+st.sidebar.write(f"Using User-Agent: {LIVE_UA}")
 
 # ---------------- Common headers ----------------
 def build_headers():
@@ -89,7 +108,7 @@ def fetch_with_retry(domain, max_retries=3):
         for attempt in range(max_retries):
             headers = build_headers()
             try:
-                response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=True)
+                response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=True, proxies=proxies)
                 if response.status_code == 200:
                     return response.text, None
                 elif response.status_code == 403:
@@ -98,7 +117,7 @@ def fetch_with_retry(domain, max_retries=3):
                     error = f"HTTP {response.status_code}"
             except requests.exceptions.SSLError:
                 try:
-                    response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=False)
+                    response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=False, proxies=proxies)
                     if response.status_code == 200:
                         return response.text, None
                     elif response.status_code == 403:
