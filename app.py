@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from io import StringIO
 import re
-import random
 
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
 st.title("Ads.txt / App-ads.txt Bulk Checker")
@@ -63,18 +62,16 @@ if lines:
                         key=f"case_{line}_{element}"
                     )
 
-# ---------------- User-Agent rotation ----------------
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-    "(KHTML, like Gecko) Version/16.0 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 "
-    "(KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
-]
+# ---------------- Fetch Live UA ----------------
+def get_live_ua():
+    try:
+        r = requests.get("https://httpbin.org/user-agent", timeout=5)
+        return r.json()["user-agent"]
+    except:
+        return "Mozilla/5.0 (compatible; MyBot/1.0)"
+
+LIVE_UA = get_live_ua()
+st.sidebar.write(f"Using Live User-Agent: {LIVE_UA}")
 
 # ---------------- Fetch with retry, redirects & SSL fallback ----------------
 def fetch_with_retry(domain, max_retries=3):
@@ -82,7 +79,7 @@ def fetch_with_retry(domain, max_retries=3):
     error = None
     for url in urls:
         for attempt in range(max_retries):
-            headers = {"User-Agent": random.choice(USER_AGENTS)}
+            headers = {"User-Agent": LIVE_UA}
             try:
                 response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=True)
                 if response.status_code == 200:
