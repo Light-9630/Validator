@@ -114,7 +114,7 @@ def fetch_with_retry(domain, max_retries=3):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     error = None
 
-    # Choose session: requests OR cloudscraper
+    # Use cloudscraper session if chosen, else requests
     if ua_choice == "Cloudflare Bypass (cloudscraper)":
         session = cloudscraper.create_scraper()
     else:
@@ -124,7 +124,14 @@ def fetch_with_retry(domain, max_retries=3):
         for attempt in range(max_retries):
             headers = build_headers()
             try:
-                response = session.get(url, headers=headers, timeout=10, allow_redirects=True, verify=True, proxies=proxies)
+                response = session.get(
+                    url,
+                    headers=headers,
+                    timeout=10,
+                    allow_redirects=True,
+                    verify=True,
+                    proxies=proxies
+                )
                 if response.status_code == 200:
                     return response.text, None
                 elif response.status_code == 403:
@@ -133,7 +140,14 @@ def fetch_with_retry(domain, max_retries=3):
                     error = f"HTTP {response.status_code}"
             except requests.exceptions.SSLError:
                 try:
-                    response = session.get(url, headers=headers, timeout=10, allow_redirects=True, verify=False, proxies=proxies)
+                    response = session.get(
+                        url,
+                        headers=headers,
+                        timeout=10,
+                        allow_redirects=True,
+                        verify=False,
+                        proxies=proxies
+                    )
                     if response.status_code == 200:
                         return response.text, None
                     elif response.status_code == 403:
