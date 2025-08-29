@@ -8,7 +8,7 @@ from io import StringIO
 import re
 
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
-st.title("🔥 Ads.txt / App-ads.txt Bulk Checker")
+st.title("Ads.txt / App-ads.txt Bulk Checker")
 
 # ---------------- Input Columns ----------------
 col1, col2 = st.columns(2)
@@ -114,59 +114,37 @@ def fetch_with_retry(domain, max_retries=3):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     error = None
 
-    # Initialize cloudscraper with advanced options for Cloudflare bypassing
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'mobile': False,
-            'desktop': True,
-        },
-        delay=10,
-        allow_brotli=True,
-        disableCloudflareV1=True,
-    )
+    # Choose session: requests OR cloudscraper
+    if ua_choice == "Cloudflare Bypass (cloudscraper)":
+        session = cloudscraper.create_scraper()
+    else:
+        session = requests
 
     for url in urls:
         for attempt in range(max_retries):
-            headers = build_headers() if LIVE_UA else {}
+            headers = build_headers()
             try:
-                # Use cloudscraper for all requests to handle Cloudflare
-                response = scraper.get(
-                    url,
-                    headers=headers,
-                    timeout=10,
-                    allow_redirects=True,
-                    verify=True,
-                    proxies=proxies
-                )
+                response = session.get(url, headers=headers, timeout=10, allow_redirects=True, verify=True, proxies=proxies)
                 if response.status_code == 200:
                     return response.text, None
                 elif response.status_code == 403:
-                    error = f"HTTP {response.status_code} (Forbidden)"
+                    return None, f"HTTP {response.status_code} (Forbidden)"
                 else:
                     error = f"HTTP {response.status_code}"
             except requests.exceptions.SSLError:
                 try:
-                    response = scraper.get(
-                        url,
-                        headers=headers,
-                        timeout=10,
-                        allow_redirects=True,
-                        verify=False,
-                        proxies=proxies
-                    )
+                    response = session.get(url, headers=headers, timeout=10, allow_redirects=True, verify=False, proxies=proxies)
                     if response.status_code == 200:
                         return response.text, None
                     elif response.status_code == 403:
-                        error = f"HTTP {response.status_code} (Forbidden)"
+                        return None, f"HTTP {response.status_code} (Forbidden)"
                     else:
                         error = f"HTTP {response.status_code}"
                 except Exception as e:
                     error = str(e)
             except Exception as e:
                 error = str(e)
-            time.sleep(2 ** attempt)  # Exponential backoff
+            time.sleep(2 ** attempt)
     return None, error
 
 # ---------------- Check line content ----------------
