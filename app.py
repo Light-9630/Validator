@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import cloudscraper
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from io import StringIO
@@ -72,7 +73,7 @@ proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
 
 ua_choice = st.sidebar.radio(
     "User-Agent Mode",
-    ["Live Browser UA", "AdsBot-Google UA"],
+    ["Live Browser UA", "AdsBot-Google UA", "Cloudflare Bypass (cloudscraper)"],
     index=0
 )
 
@@ -86,29 +87,44 @@ def get_live_ua():
 
 if ua_choice == "Live Browser UA":
     LIVE_UA = get_live_ua()
-else:
+elif ua_choice == "AdsBot-Google UA":
     LIVE_UA = "Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)"
+else:
+    LIVE_UA = None  # cloudscraper will handle UA itself
 
-st.sidebar.write(f"Using User-Agent: {LIVE_UA}")
+if LIVE_UA:
+    st.sidebar.write(f"Using User-Agent: {LIVE_UA}")
+else:
+    st.sidebar.write("Using Cloudflare Bypass Mode (cloudscraper)")
 
 # ---------------- Common headers ----------------
 def build_headers():
-    return {
-        "User-Agent": LIVE_UA,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive",
-    }
+    if LIVE_UA:
+        return {
+            "User-Agent": LIVE_UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Connection": "keep-alive",
+        }
+    else:
+        return {}
 
 # ---------------- Fetch with retry, redirects & SSL fallback ----------------
 def fetch_with_retry(domain, max_retries=3):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     error = None
+
+    # Choose session: requests OR cloudscraper
+    if ua_choice == "Cloudflare Bypass (cloudscraper)":
+        session = cloudscraper.create_scraper()
+    else:
+        session = requests
+
     for url in urls:
         for attempt in range(max_retries):
             headers = build_headers()
             try:
-                response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=True, proxies=proxies)
+                response = session.get(url, headers=headers, timeout=10, allow_redirects=True, verify=True, proxies=proxies)
                 if response.status_code == 200:
                     return response.text, None
                 elif response.status_code == 403:
@@ -117,7 +133,7 @@ def fetch_with_retry(domain, max_retries=3):
                     error = f"HTTP {response.status_code}"
             except requests.exceptions.SSLError:
                 try:
-                    response = requests.get(url, headers=headers, timeout=10, allow_redirects=True, verify=False, proxies=proxies)
+                    response = session.get(url, headers=headers, timeout=10, allow_redirects=True, verify=False, proxies=proxies)
                     if response.status_code == 200:
                         return response.text, None
                     elif response.status_code == 403:
