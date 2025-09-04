@@ -158,21 +158,24 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         for line in content_lines
         if line.strip() and not line.strip().startswith('#')
     ]
+    
     for c_line in cleaned_lines:
         content_parts = [e.strip() for e in c_line.split(',')]
-        all_match = True
-        for i, element_to_find in enumerate(line_elements):
-            if len(line_elements) == 1 and "," not in element_to_find:
-                # single word/number search across whole line
-                if case_sensitives_line.get(element_to_find, False):
-                    if element_to_find not in c_line:
-                        all_match = False
-                        break
-                else:
-                    if element_to_find.lower() not in c_line.lower():
-                        all_match = False
-                        break
+
+        # --- case 1: single word/number search ---
+        if len(line_elements) == 1 and "," not in line_elements[0]:
+            element_to_find = line_elements[0]
+            if case_sensitives_line.get(element_to_find, False):
+                if element_to_find in c_line:   # raw match
+                    return True
             else:
+                if element_to_find.lower() in c_line.lower():  # case-insensitive substring
+                    return True
+
+        # --- case 2: CSV style match (field by field) ---
+        else:
+            all_match = True
+            for i, element_to_find in enumerate(line_elements):
                 if i >= len(content_parts):
                     all_match = False
                     break
@@ -185,8 +188,9 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
                     if element_to_find.lower() != content_element.lower():
                         all_match = False
                         break
-        if all_match:
-            return True
+            if all_match:
+                return True
+    
     return False
 
 # ---------------- Main Checking ----------------
@@ -238,3 +242,4 @@ if st.button("Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
+
