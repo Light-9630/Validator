@@ -7,35 +7,38 @@ import time
 from io import StringIO
 import re
 
+# ---------------- Page Setup ----------------
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
-st.title("Ads.txt / App-ads.txt Bulk Checker")
+st.title("🔎 Ads.txt / App-ads.txt Bulk Checker")
 
-# ---------------- Input Columns ----------------
-col1, col2 = st.columns(2)
+# ---------------- Input Tabs ----------------
+tab1, tab2 = st.tabs(["📋 Paste Domains", "📂 Upload Domains File"])
 
-with col1:
+domains = []
+with tab1:
     st.header("Input Domains")
     domain_input = st.text_area("Paste domains (one per line)", height=200)
-    uploaded_file = st.file_uploader("Or upload CSV/TXT file with domains", type=["csv","txt"])
+    if domain_input:
+        domains = [d.strip() for d in domain_input.splitlines() if d.strip()]
 
-with col2:
-    st.header("Search Lines")
-    line_input = st.text_area("Paste search lines (one per line, CSV or single word/number)", height=200)
+with tab2:
+    st.header("Upload File")
+    uploaded_file = st.file_uploader("Upload CSV/TXT file with domains", type=["csv", "txt"])
+    if uploaded_file:
+        stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+        uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
+        domains.extend(uploaded_domains)
 
-# ---------------- Process Domains ----------------
-domains = []
-if domain_input:
-    domains = [d.strip() for d in domain_input.splitlines() if d.strip()]
-if uploaded_file:
-    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-    uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
-    domains.extend(uploaded_domains)
 domains = list(set(domains))
 if domains:
-    st.info(f"{len(domains)} unique domains loaded.")
+    st.info(f"✅ {len(domains)} unique domains loaded.")
+
+# ---------------- Search Lines ----------------
+st.header("🔍 Search Lines")
+line_input = st.text_area("Paste search lines (CSV format or single word/number, one per line)", height=200)
 
 # ---------------- File type selection ----------------
-file_type = st.selectbox("Select file type", ["ads.txt","app-ads.txt"])
+file_type = st.selectbox("Select file type", ["ads.txt", "app-ads.txt"])
 
 # ---------------- Field Limit Selection ----------------
 field_limit = st.selectbox(
@@ -50,7 +53,7 @@ case_sensitives = {}
 line_elements = {}
 
 if lines:
-    with st.expander("Lines Management", expanded=True):
+    with st.expander("⚙️ Line Settings", expanded=True):
         select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
         for line in lines:
             # if line is CSV => split by comma, else keep as single element
@@ -60,7 +63,7 @@ if lines:
                 elements = [line]
             line_elements[line] = elements[:field_limit]
             case_sensitives[line] = {}
-            st.markdown(f"**Line: {line}**")
+            st.markdown(f"**Line: `{line}`**")
             cols = st.columns(len(line_elements[line]))
             for i, element in enumerate(line_elements[line]):
                 with cols[i]:
@@ -71,7 +74,7 @@ if lines:
                     )
 
 # ---------------- Sidebar: Proxy + UA Mode ----------------
-st.sidebar.header("Settings")
+st.sidebar.header("⚡ Settings")
 
 proxy_input = st.sidebar.text_input(
     "Proxy (optional)",
@@ -101,9 +104,9 @@ else:
     LIVE_UA = None  # cloudscraper will handle UA itself
 
 if LIVE_UA:
-    st.sidebar.write(f"Using User-Agent: {LIVE_UA}")
+    st.sidebar.write(f"🟢 Using User-Agent: {LIVE_UA}")
 else:
-    st.sidebar.write("Using Cloudflare Bypass Mode (cloudscraper)")
+    st.sidebar.write("🟡 Using Cloudflare Bypass Mode (cloudscraper)")
 
 # ---------------- Common headers ----------------
 def build_headers():
@@ -194,7 +197,7 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
     return False
 
 # ---------------- Main Checking ----------------
-if st.button("Start Checking", disabled=not (domains and lines)):
+if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     start_time = time.time()
     results = {"Page": domains}
     for line in lines:
@@ -216,30 +219,29 @@ if st.button("Start Checking", disabled=not (domains and lines)):
             if err:
                 errors[domain] = err
                 for line in lines:
-                    results[line][domains.index(domain)] = "Error"
+                    results[line][domains.index(domain)] = "⚠️ Error"
             else:
                 for line in lines:
                     found = check_line_in_content(content, line_elements[line], case_sensitives[line])
-                    results[line][domains.index(domain)] = "Yes" if found else "No"
+                    results[line][domains.index(domain)] = "✅ Yes" if found else "❌ No"
             processed += 1
             progress_bar.progress(processed / len(domains))
             status_text.text(f"Processed {processed}/{len(domains)} domains...")
     
     end_time = time.time()
-    st.success(f"Checking complete! Time taken: {end_time - start_time:.2f} seconds")
+    st.success(f"🎉 Checking complete! Time taken: {end_time - start_time:.2f} seconds")
     
     # --- Display results ---
-    st.subheader("Results")
+    st.subheader("📊 Results")
     df = pd.DataFrame(results)
     st.dataframe(df, use_container_width=True, height=400)
     
     # --- Download CSV ---
     csv_data = df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download Results as CSV", data=csv_data, file_name="ads_txt_check_results.csv", mime="text/csv")
+    st.download_button("💾 Download Results as CSV", data=csv_data, file_name="ads_txt_check_results.csv", mime="text/csv")
     
     # --- Display Errors ---
     if errors:
-        st.subheader("Errors")
+        st.subheader("⚠️ Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
-
