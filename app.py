@@ -20,7 +20,7 @@ with col1:
 
 with col2:
     st.header("Search Lines")
-    line_input = st.text_area("Paste search lines (one per line, CSV format)", height=200)
+    line_input = st.text_area("Paste search lines (one per line, CSV or single word/number)", height=200)
 
 # ---------------- Process Domains ----------------
 domains = []
@@ -35,10 +35,7 @@ if domains:
     st.info(f"{len(domains)} unique domains loaded.")
 
 # ---------------- File type selection ----------------
-file_type = st.selectbox(
-    "Select file type / Mode",
-    ["ads.txt", "app-ads.txt", "Custom Text Search"]
-)
+file_type = st.selectbox("Select file type", ["ads.txt","app-ads.txt"])
 
 # ---------------- Field Limit Selection ----------------
 field_limit = st.selectbox(
@@ -56,7 +53,11 @@ if lines:
     with st.expander("Lines Management", expanded=True):
         select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
         for line in lines:
-            elements = [e.strip() for e in line.split(',') if e.strip()]
+            # if line is CSV => split by comma, else keep as single element
+            if "," in line:
+                elements = [e.strip() for e in line.split(',') if e.strip()]
+            else:
+                elements = [line]
             line_elements[line] = elements[:field_limit]
             case_sensitives[line] = {}
             st.markdown(f"**Line: {line}**")
@@ -118,11 +119,7 @@ def build_headers():
 
 # ---------------- Fetch with retry, redirects & SSL fallback ----------------
 def fetch_with_retry(domain, max_retries=3):
-    if file_type == "Custom Text Search":
-        urls = [f"https://{domain}", f"http://{domain}"]  # root page
-    else:
-        urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
-
+    urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     error = None
     session = cloudscraper.create_scraper() if ua_choice == "Cloudflare Bypass (cloudscraper)" else requests
 
@@ -155,31 +152,27 @@ def fetch_with_retry(domain, max_retries=3):
 
 # ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
-    if file_type == "Custom Text Search":
-        # search entire HTML/text body
-        for element_to_find in line_elements:
-            found = False
-            if case_sensitives_line.get(element_to_find, False):
-                if element_to_find in content:
-                    found = True
+    content_lines = content.splitlines()
+    cleaned_lines = [
+        re.split(r'\s*#', line.strip())[0].strip()
+        for line in content_lines
+        if line.strip() and not line.strip().startswith('#')
+    ]
+    for c_line in cleaned_lines:
+        content_parts = [e.strip() for e in c_line.split(',')]
+        all_match = True
+        for i, element_to_find in enumerate(line_elements):
+            if len(line_elements) == 1 and "," not in element_to_find:
+                # single word/number search across whole line
+                if case_sensitives_line.get(element_to_find, False):
+                    if element_to_find not in c_line:
+                        all_match = False
+                        break
+                else:
+                    if element_to_find.lower() not in c_line.lower():
+                        all_match = False
+                        break
             else:
-                if element_to_find.lower() in content.lower():
-                    found = True
-            if not found:
-                return False
-        return True
-    else:
-        # ads.txt style line-by-line check
-        content_lines = content.splitlines()
-        cleaned_lines = [
-            re.split(r'\s*#', line.strip())[0].strip()
-            for line in content_lines
-            if line.strip() and not line.strip().startswith('#')
-        ]
-        for c_line in cleaned_lines:
-            content_parts = [e.strip() for e in c_line.split(',')]
-            all_match = True
-            for i, element_to_find in enumerate(line_elements):
                 if i >= len(content_parts):
                     all_match = False
                     break
@@ -192,9 +185,9 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
                     if element_to_find.lower() != content_element.lower():
                         all_match = False
                         break
-            if all_match:
-                return True
-        return False
+        if all_match:
+            return True
+    return False
 
 # ---------------- Main Checking ----------------
 if st.button("Start Checking", disabled=not (domains and lines)):
