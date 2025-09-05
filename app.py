@@ -242,7 +242,8 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     
     # --- Display Errors ---
     if errors:
-        st.subheader("⚠️ Errors")
+        st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
+
 
