@@ -223,7 +223,7 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
             else:
                 for line in lines:
                     found = check_line_in_content(content, line_elements[line], case_sensitives[line])
-                    results[line][domains.index(domain)] = "✅ Yes" if found else "❌ No"
+                    results[line][domains.index(domain)] = "Yes" if found else "No"
             processed += 1
             progress_bar.progress(processed / len(domains))
             status_text.text(f"Processed {processed}/{len(domains)} domains...")
@@ -245,3 +245,4 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         st.subheader("⚠️ Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
+
