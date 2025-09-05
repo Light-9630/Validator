@@ -219,7 +219,7 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
             if err:
                 errors[domain] = err
                 for line in lines:
-                    results[line][domains.index(domain)] = "⚠️ Error"
+                    results[line][domains.index(domain)] = "Error"
             else:
                 for line in lines:
                     found = check_line_in_content(content, line_elements[line], case_sensitives[line])
@@ -245,5 +245,6 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
+
 
 
