@@ -88,6 +88,25 @@ ua_choice = st.sidebar.radio(
     index=0
 )
 
+# ---------------- Bypass Settings (ADDED) ----------------
+st.sidebar.subheader("🛠️ Bypass Settings")
+bypass_enable = st.sidebar.checkbox("Enable bypass for specific domains", value=False)
+default_bypass_list = "\n".join([
+    "grid.id",
+    "kontan.co.id",
+    "parapuan.co",
+    "bolasport.com",
+    "gridoto.com",
+    "sonora.id",
+    "juara.net",
+])
+bypass_input = st.sidebar.text_area(
+    "Domains to bypass (one per line)",
+    value=default_bypass_list if bypass_enable else "",
+    height=140
+)
+bypass_domains = [d.strip().lower() for d in bypass_input.splitlines() if d.strip()] if bypass_enable else []
+
 # ---------------- Fetch Live UA ----------------
 def get_live_ua():
     try:
@@ -109,32 +128,88 @@ else:
     st.sidebar.write("🟡 Using Cloudflare Bypass Mode (cloudscraper)")
 
 # ---------------- Common headers ----------------
-def build_headers():
+def build_headers(extra=None):
+    h = {}
     if LIVE_UA:
-        return {
+        h = {
             "User-Agent": LIVE_UA,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "Connection": "keep-alive",
         }
-    else:
-        return {}
+    if extra:
+        h.update(extra)
+    return h
 
-# ---------------- Fetch with retry, redirects & SSL fallback ----------------
+# ---------------- Fetch with retry, redirects & SSL fallback (UPDATED for bypass) ----------------
 def fetch_with_retry(domain, max_retries=3):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     error = None
-    session = cloudscraper.create_scraper() if ua_choice == "Cloudflare Bypass (cloudscraper)" else requests
+
+    is_bypass = domain.lower() in bypass_domains
+
+    # Choose session: if bypass requested for this domain, prefer cloudscraper
+    if is_bypass or ua_choice == "Cloudflare Bypass (cloudscraper)":
+        session = cloudscraper.create_scraper()
+    else:
+        session = requests
+
+    # extra headers for bypass attempts
+    extra_headers = {}
+    if is_bypass:
+        extra_headers["Referer"] = "https://www.google.com/"
+        extra_headers["Origin"] = f"https://{domain}"
+
+    # Candidate UAs we can try when bypassing (will try LIVE_UA first if available)
+    ua_candidates = []
+    if LIVE_UA:
+        ua_candidates.append(LIVE_UA)
+    ua_candidates.extend([
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.84 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Safari/605.1.15",
+    ])
 
     for url in urls:
+        # If bypassing, try a preliminary homepage visit to establish cookies
+        if is_bypass:
+            try:
+                initial_headers = build_headers(extra={"Referer": "https://www.google.com/"})
+                # Use cloudscraper session to simulate browser JS challenge handling
+                try:
+                    _ = session.get(f"https://{domain}", headers=initial_headers, timeout=6, verify=False, proxies=proxies)
+                except Exception:
+                    pass  # ignore errors here, cookies may or may not be set
+            except Exception:
+                pass
+
         for attempt in range(max_retries):
-            headers = build_headers()
+            # If bypassing, rotate through UA candidates per attempt
+            headers = build_headers(extra_headers)
+            if is_bypass and ua_candidates:
+                headers["User-Agent"] = ua_candidates[attempt % len(ua_candidates)]
+
             try:
                 response = session.get(url, headers=headers, timeout=10, allow_redirects=True, verify=True, proxies=proxies)
                 if response.status_code == 200:
                     return response.text, None
                 elif response.status_code == 403:
-                    return None, f"HTTP {response.status_code} (Forbidden)"
+                    # If bypass enabled, try again with verify=False and cloudscraper forced
+                    if is_bypass:
+                        try:
+                            # ensure session is cloudscraper
+                            if not isinstance(session, cloudscraper.CloudScraper):
+                                session = cloudscraper.create_scraper()
+                            response = session.get(url, headers=headers, timeout=10, allow_redirects=True, verify=False, proxies=proxies)
+                            if response.status_code == 200:
+                                return response.text, None
+                            elif response.status_code == 403:
+                                error = f"HTTP {response.status_code} (Forbidden)"
+                            else:
+                                error = f"HTTP {response.status_code}"
+                        except Exception as e:
+                            error = str(e)
+                    else:
+                        return None, f"HTTP {response.status_code} (Forbidden)"
                 else:
                     error = f"HTTP {response.status_code}"
             except requests.exceptions.SSLError:
@@ -245,6 +320,3 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
-
-
-
