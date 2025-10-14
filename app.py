@@ -149,11 +149,11 @@ def fetch_with_retry(domain, max_retries=3):
     is_bypass = domain.lower() in bypass_domains
 
     # Choose session: if bypass requested for this domain, prefer cloudscraper
-    if is_bypass or ua_choice == "Cloudflare Bypass (cloudscraper)":
+    if ua_choice == "Cloudflare Bypass (cloudscraper)":
         session = cloudscraper.create_scraper()
     else:
-        session = requests
-
+        session = requests.Session()
+        session.headers.update(build_headers())
     # extra headers for bypass attempts
     extra_headers = {}
     if is_bypass:
@@ -320,3 +320,4 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
+
