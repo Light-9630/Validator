@@ -88,24 +88,6 @@ ua_choice = st.sidebar.radio(
     index=0
 )
 
-# ---------------- Bypass Settings (ADDED) ----------------
-st.sidebar.subheader("🛠️ Bypass Settings")
-bypass_enable = st.sidebar.checkbox("Enable bypass for specific domains", value=False)
-default_bypass_list = "\n".join([
-    "grid.id",
-    "kontan.co.id",
-    "parapuan.co",
-    "bolasport.com",
-    "gridoto.com",
-    "sonora.id",
-    "juara.net",
-])
-bypass_input = st.sidebar.text_area(
-    "Domains to bypass (one per line)",
-    value=default_bypass_list if bypass_enable else "",
-    height=140
-)
-bypass_domains = [d.strip().lower() for d in bypass_input.splitlines() if d.strip()] if bypass_enable else []
 
 # ---------------- Fetch Live UA ----------------
 def get_live_ua():
@@ -320,4 +302,5 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
+
 
