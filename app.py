@@ -105,7 +105,7 @@ session.headers.update({
 if proxies:
     session.proxies.update(proxies)
 
-# ---------------- Fetch with retry ----------------
+# ---------------- Fetch with retry (Updated for SSL handling) ----------------
 def fetch_with_retry(domain, max_retries=2, timeout=5):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     last_error = None
@@ -117,6 +117,16 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                     return response.text, None
                 else:
                     last_error = f"HTTP {response.status_code}"
+            except requests.exceptions.SSLError as ssl_err:
+                # Retry once with SSL verification disabled
+                try:
+                    response = session.get(url, timeout=timeout, allow_redirects=True, verify=False)
+                    if response.status_code == 200:
+                        return response.text, None
+                    else:
+                        last_error = f"HTTP {response.status_code}"
+                except Exception as e:
+                    last_error = str(e)
             except Exception as e:
                 last_error = str(e)
     return None, last_error
