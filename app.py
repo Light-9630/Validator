@@ -56,7 +56,6 @@ if lines:
     with st.expander("⚙️ Line Settings", expanded=True):
         select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
         for line in lines:
-            # if line is CSV => split by comma, else keep as single element
             if "," in line:
                 elements = [e.strip() for e in line.split(',') if e.strip()]
             else:
@@ -87,7 +86,6 @@ ua_choice = st.sidebar.radio(
     ["Live Browser UA", "AdsBot-Google UA", "Cloudflare Bypass (cloudscraper)"],
     index=0
 )
-
 
 # ---------------- Fetch Live UA ----------------
 def get_live_ua():
@@ -123,7 +121,24 @@ def build_headers(extra=None):
         h.update(extra)
     return h
 
-# ---------------- Fetch with retry, redirects & SSL fallback (UPDATED for bypass) ----------------
+# ---------------- Fetch with retry ----------------
+def fetch_with_retry(domain, max_retries=3):
+    urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
+    session = cloudscraper.create_scraper() if ua_choice == "Cloudflare Bypass (cloudscraper)" else requests.Session()
+    session.headers.update(build_headers())
+
+    for url in urls:
+        for attempt in range(max_retries):
+            try:
+                response = session.get(url, timeout=10, allow_redirects=True, verify=False, proxies=proxies)
+                if response.status_code == 200:
+                    return response.text, None
+                else:
+                    error = f"HTTP {response.status_code}"
+            except Exception as e:
+                error = str(e)
+            time.sleep(2 ** attempt)
+    return None, error
 
 # ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
@@ -137,17 +152,14 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
     for c_line in cleaned_lines:
         content_parts = [e.strip() for e in c_line.split(',')]
 
-        # --- case 1: single word/number search ---
         if len(line_elements) == 1 and "," not in line_elements[0]:
             element_to_find = line_elements[0]
             if case_sensitives_line.get(element_to_find, False):
-                if element_to_find in c_line:   # raw match
+                if element_to_find in c_line:
                     return True
             else:
-                if element_to_find.lower() in c_line.lower():  # case-insensitive substring
+                if element_to_find.lower() in c_line.lower():
                     return True
-
-        # --- case 2: CSV style match (field by field) ---
         else:
             all_match = True
             for i, element_to_find in enumerate(line_elements):
@@ -165,7 +177,6 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
                         break
             if all_match:
                 return True
-    
     return False
 
 # ---------------- Main Checking ----------------
@@ -203,20 +214,14 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     end_time = time.time()
     st.success(f"🎉 Checking complete! Time taken: {end_time - start_time:.2f} seconds")
     
-    # --- Display results ---
     st.subheader("📊 Results")
     df = pd.DataFrame(results)
     st.dataframe(df, use_container_width=True, height=400)
     
-    # --- Download CSV ---
     csv_data = df.to_csv(index=False).encode('utf-8')
     st.download_button("💾 Download Results as CSV", data=csv_data, file_name="ads_txt_check_results.csv", mime="text/csv")
     
-    # --- Display Errors ---
     if errors:
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
-
-
-
