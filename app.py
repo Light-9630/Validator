@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import requests
-import cloudscraper
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from io import StringIO
@@ -29,7 +28,8 @@ with tab2:
         uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
         domains.extend(uploaded_domains)
 
-domains = list(set(domains))
+# Deduplicate but preserve order
+domains = list(dict.fromkeys(domains))
 if domains:
     st.info(f"✅ {len(domains)} unique domains loaded.")
 
@@ -53,7 +53,7 @@ case_sensitives = {}
 line_elements = {}
 
 if lines:
-    with st.expander("⚙️ Line Settings", expanded=True):
+    with st.expander("⚙ Line Settings", expanded=True):
         select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
         for line in lines:
             if "," in line:
@@ -62,7 +62,7 @@ if lines:
                 elements = [line]
             line_elements[line] = elements[:field_limit]
             case_sensitives[line] = {}
-            st.markdown(f"**Line: `{line}`**")
+            st.markdown(f"**Line: {line}**")
             cols = st.columns(len(line_elements[line]))
             for i, element in enumerate(line_elements[line]):
                 with cols[i]:
@@ -83,61 +83,43 @@ proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
 
 ua_choice = st.sidebar.radio(
     "User-Agent Mode",
-    ["Live Browser UA", "AdsBot-Google UA", "Cloudflare Bypass (cloudscraper)"],
+    ["Live Browser UA", "AdsBot-Google UA"],
     index=0
 )
 
-# ---------------- Fetch Live UA ----------------
-def get_live_ua():
-    try:
-        r = requests.get("https://httpbin.org/user-agent", timeout=5)
-        return r.json()["user-agent"]
-    except:
-        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
-
+# ---------------- User-Agent ----------------
 if ua_choice == "Live Browser UA":
-    LIVE_UA = get_live_ua()
-elif ua_choice == "AdsBot-Google UA":
+    LIVE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+else:
     LIVE_UA = "Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)"
-else:
-    LIVE_UA = None  # cloudscraper will handle UA itself
 
-if LIVE_UA:
-    st.sidebar.write(f"🟢 Using User-Agent: {LIVE_UA}")
-else:
-    st.sidebar.write("🟡 Using Cloudflare Bypass Mode (cloudscraper)")
+st.sidebar.write(f"🟢 Using User-Agent: {LIVE_UA}")
 
-# ---------------- Common headers ----------------
-def build_headers(extra=None):
-    h = {}
-    if LIVE_UA:
-        h =  {
-    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,/;q=0.8,application/signed-exchange;v=b3;q=0.7',
+# ---------------- Global Session ----------------
+session = requests.Session()
+session.headers.update({
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,/;q=0.8',
     'accept-language': 'en-US,en;q=0.9',
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
-}
-    if extra:
-        h.update(extra)
-    return h
+    'user-agent': LIVE_UA
+})
+if proxies:
+    session.proxies.update(proxies)
 
 # ---------------- Fetch with retry ----------------
-def fetch_with_retry(domain, max_retries=3):
+def fetch_with_retry(domain, max_retries=2, timeout=5):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
-    session = cloudscraper.create_scraper() if ua_choice == "Cloudflare Bypass (cloudscraper)" else requests.Session()
-    session.headers.update(build_headers())
-
+    last_error = None
     for url in urls:
         for attempt in range(max_retries):
             try:
-                response = session.get(url, timeout=10, allow_redirects=True, verify=False, proxies=proxies)
+                response = session.get(url, timeout=timeout, allow_redirects=True)
                 if response.status_code == 200:
                     return response.text, None
                 else:
-                    error = f"HTTP {response.status_code}"
+                    last_error = f"HTTP {response.status_code}"
             except Exception as e:
-                error = str(e)
-            time.sleep(2 ** attempt)
-    return None, error
+                last_error = str(e)
+    return None, last_error
 
 # ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
@@ -189,11 +171,11 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_domain = {executor.submit(fetch_with_retry, domain): domain for domain in domains}
-        processed = 0
-        for future in as_completed(future_to_domain):
-            domain = future_to_domain[future]
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        future_to_index = {executor.submit(fetch_with_retry, domain): idx for idx, domain in enumerate(domains)}
+        for processed, future in enumerate(as_completed(future_to_index), 1):
+            idx = future_to_index[future]
+            domain = domains[idx]
             try:
                 content, err = future.result()
             except Exception as e:
@@ -201,12 +183,11 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
             if err:
                 errors[domain] = err
                 for line in lines:
-                    results[line][domains.index(domain)] = "Error"
+                    results[line][idx] = "Error"
             else:
                 for line in lines:
                     found = check_line_in_content(content, line_elements[line], case_sensitives[line])
-                    results[line][domains.index(domain)] = "Yes" if found else "No"
-            processed += 1
+                    results[line][idx] = "Yes" if found else "No"
             progress_bar.progress(processed / len(domains))
             status_text.text(f"Processed {processed}/{len(domains)} domains...")
     
@@ -224,4 +205,3 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
-
