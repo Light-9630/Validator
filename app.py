@@ -5,8 +5,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from io import StringIO
 import re
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 # ---------------- Page Setup ----------------
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
@@ -46,7 +44,7 @@ file_type = st.selectbox("Select file type", ["ads.txt", "app-ads.txt"])
 field_limit = st.selectbox(
     "Select number of fields to check",
     [1, 2, 3, 4],
-    index=1
+    index=1  # default = 2
 )
 
 # ---------------- Process Lines ----------------
@@ -64,6 +62,7 @@ if lines:
                 elements = [line]
             line_elements[line] = elements[:field_limit]
             case_sensitives[line] = {}
+
             st.markdown(f"**Line: {line}**")
             cols = st.columns(len(line_elements[line]))
             for i, element in enumerate(line_elements[line]):
@@ -89,6 +88,7 @@ ua_choice = st.sidebar.radio(
     index=0
 )
 
+# ---------------- User-Agent ----------------
 if ua_choice == "Live Browser UA":
     LIVE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 else:
@@ -96,7 +96,7 @@ else:
 
 st.sidebar.write(f"🟢 Using User-Agent: {LIVE_UA}")
 
-# ---------------- Global Session + Retry Added ----------------
+# ---------------- Global Session ----------------
 session = requests.Session()
 session.headers.update({
     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,/;q=0.8',
@@ -106,13 +106,8 @@ session.headers.update({
 if proxies:
     session.proxies.update(proxies)
 
-retry_strategy = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
-adapter = HTTPAdapter(max_retries=retry_strategy)
-session.mount("http://", adapter)
-session.mount("https://", adapter)
-
-# ---------------- Fetch with Retry (timeout increased to 20) ----------------
-def fetch_with_retry(domain, max_retries=2, timeout=20):
+# ---------------- Fetch with retry (Updated for SSL handling) ----------------
+def fetch_with_retry(domain, max_retries=2, timeout=5):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     last_error = None
     for url in urls:
@@ -144,7 +139,7 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         for line in content_lines
         if line.strip() and not line.strip().startswith('#')
     ]
-    
+
     for c_line in cleaned_lines:
         content_parts = [e.strip() for e in c_line.split(',')]
 
@@ -182,19 +177,21 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     for line in lines:
         results[line] = [""] * len(domains)
     errors = {}
-    
+
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+
     with ThreadPoolExecutor(max_workers=30) as executor:
         future_to_index = {executor.submit(fetch_with_retry, domain): idx for idx, domain in enumerate(domains)}
         for processed, future in enumerate(as_completed(future_to_index), 1):
             idx = future_to_index[future]
             domain = domains[idx]
+
             try:
                 content, err = future.result()
             except Exception as e:
                 content, err = None, str(e)
+
             if err:
                 errors[domain] = err
                 for line in lines:
@@ -203,19 +200,20 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
                 for line in lines:
                     found = check_line_in_content(content, line_elements[line], case_sensitives[line])
                     results[line][idx] = "Yes" if found else "No"
+
             progress_bar.progress(processed / len(domains))
             status_text.text(f"Processed {processed}/{len(domains)} domains...")
-    
+
     end_time = time.time()
     st.success(f"🎉 Checking complete! Time taken: {end_time - start_time:.2f} seconds")
-    
+
     st.subheader("📊 Results")
     df = pd.DataFrame(results)
     st.dataframe(df, use_container_width=True, height=400)
-    
+
     csv_data = df.to_csv(index=False).encode('utf-8')
     st.download_button("💾 Download Results as CSV", data=csv_data, file_name="ads_txt_check_results.csv", mime="text/csv")
-    
+
     if errors:
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
