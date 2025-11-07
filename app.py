@@ -106,7 +106,7 @@ if proxies:
     session.proxies.update(proxies)
 
 # ---------------- Fetch with retry (Updated for SSL handling) ----------------
-def fetch_with_retry(domain, max_retries=2, timeout=5):
+def fetch_with_retry(domain, max_retries=2, timeout=15):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     last_error = None
     for url in urls:
@@ -215,3 +215,4 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
+
