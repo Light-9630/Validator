@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from io import StringIO
 import re
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # ---------------- Page Setup ----------------
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
@@ -44,7 +46,7 @@ file_type = st.selectbox("Select file type", ["ads.txt", "app-ads.txt"])
 field_limit = st.selectbox(
     "Select number of fields to check",
     [1, 2, 3, 4],
-    index=1  # default = 2
+    index=1
 )
 
 # ---------------- Process Lines ----------------
@@ -87,7 +89,6 @@ ua_choice = st.sidebar.radio(
     index=0
 )
 
-# ---------------- User-Agent ----------------
 if ua_choice == "Live Browser UA":
     LIVE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 else:
@@ -95,7 +96,7 @@ else:
 
 st.sidebar.write(f"🟢 Using User-Agent: {LIVE_UA}")
 
-# ---------------- Global Session ----------------
+# ---------------- Global Session + Retry Added ----------------
 session = requests.Session()
 session.headers.update({
     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,/;q=0.8',
@@ -105,8 +106,13 @@ session.headers.update({
 if proxies:
     session.proxies.update(proxies)
 
-# ---------------- Fetch with retry (Updated for SSL handling) ----------------
-def fetch_with_retry(domain, max_retries=2, timeout=15):
+retry_strategy = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+
+# ---------------- Fetch with Retry (timeout increased to 20) ----------------
+def fetch_with_retry(domain, max_retries=2, timeout=20):
     urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     last_error = None
     for url in urls:
@@ -117,8 +123,7 @@ def fetch_with_retry(domain, max_retries=2, timeout=15):
                     return response.text, None
                 else:
                     last_error = f"HTTP {response.status_code}"
-            except requests.exceptions.SSLError as ssl_err:
-                # Retry once with SSL verification disabled
+            except requests.exceptions.SSLError:
                 try:
                     response = session.get(url, timeout=timeout, allow_redirects=True, verify=False)
                     if response.status_code == 200:
@@ -215,4 +220,3 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         st.subheader("Errors")
         error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
         st.dataframe(error_df, use_container_width=True)
-
