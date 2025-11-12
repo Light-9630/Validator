@@ -1,236 +1,221 @@
-# ads_checker_final_fixed.py
 import streamlit as st
 import pandas as pd
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import time, json, os, re, datetime, base64
+import time
 from io import StringIO
+import re
 
-st.set_page_config(page_title="Ads.txt / App-Ads.txt Bulk Checker", layout="wide")
-st.title("🔎 Ads.txt / App-Ads.txt Bulk Checker")
+# ---------------- Page Setup ----------------
+st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
+st.title("🔎 Ads.txt / App-ads.txt Bulk Checker")
 
-DATA_FILE = "data.json"
-DEFAULT_BRANCH = "main"
+# ---------------- Input Tabs ----------------
+tab1, tab2 = st.tabs(["📋 Paste Domains", "📂 Upload Domains File"])
 
-# ---------------- Helpers ----------------
-def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"domains": {}, "snapshots": {}}
+domains = []
+with tab1:
+    st.header("Input Domains")
+    domain_input = st.text_area("Paste domains (one per line)", height=200)
+    if domain_input:
+        domains = [d.strip() for d in domain_input.splitlines() if d.strip()]
 
-def save_local_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+with tab2:
+    st.header("Upload File")
+    uploaded_file = st.file_uploader("Upload CSV/TXT file with domains", type=["csv", "txt"])
+    if uploaded_file:
+        stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+        uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
+        domains.extend(uploaded_domains)
 
-def github_commit_datafile(data, commit_message="Update data.json"):
-    token = st.secrets.get("GITHUB_TOKEN") if st.secrets else None
-    repo = st.secrets.get("GITHUB_REPO") if st.secrets else None
-    branch = st.secrets.get("GITHUB_BRANCH", DEFAULT_BRANCH)
-    if not token or not repo:
-        return False, "GitHub not configured"
-    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
-    api = f"https://api.github.com/repos/{repo}/contents/{DATA_FILE}"
-    r = requests.get(f"{api}?ref={branch}", headers=headers)
-    sha = r.json().get("sha") if r.status_code == 200 else None
-    b64 = base64.b64encode(json.dumps(data, indent=2).encode()).decode()
-    payload = {"message": commit_message, "content": b64, "branch": branch}
-    if sha:
-        payload["sha"] = sha
-    resp = requests.put(api, headers=headers, json=payload)
-    return (resp.status_code in (200, 201)), resp.text
+# Deduplicate but preserve order
+domains = list(dict.fromkeys(domains))
+if domains:
+    st.info(f"✅ {len(domains)} unique domains loaded.")
 
-# ---------------- Load Data ----------------
-if "data" not in st.session_state:
-    st.session_state.data = load_data()
-data = st.session_state.data
-data.setdefault("domains", {})
-data.setdefault("snapshots", {})
+# ---------------- Search Lines ----------------
+st.header("🔍 Search Lines")
+line_input = st.text_area("Paste search lines (CSV format or single word/number, one per line)", height=200)
 
-# ---------------- Sidebar Settings ----------------
-st.sidebar.header("⚙️ Settings")
-proxy_input = st.sidebar.text_input("Proxy (optional)", placeholder="http://host:port")
-proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
-ua_choice = st.sidebar.radio("User-Agent", ["Live Browser UA", "AdsBot-Google UA"], index=0)
-LIVE_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141 Safari/537.36"
-    if ua_choice == "Live Browser UA"
-    else "Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)"
+# ---------------- File type selection ----------------
+file_type = st.selectbox("Select file type", ["ads.txt", "app-ads.txt"])
+
+# ---------------- Field Limit Selection ----------------
+field_limit = st.selectbox(
+    "Select number of fields to check",
+    [1, 2, 3, 4],
+    index=1  # default = 2
 )
-st.sidebar.caption(f"🟢 UA: {LIVE_UA}")
 
+# ---------------- Process Lines ----------------
+lines = [l.strip() for l in line_input.splitlines() if l.strip()]
+case_sensitives = {}
+line_elements = {}
+
+if lines:
+    with st.expander("⚙ Line Settings", expanded=True):
+        select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
+        for line in lines:
+            if "," in line:
+                elements = [e.strip() for e in line.split(',') if e.strip()]
+            else:
+                elements = [line]
+            line_elements[line] = elements[:field_limit]
+            case_sensitives[line] = {}
+
+            st.markdown(f"**Line: {line}**")
+            cols = st.columns(len(line_elements[line]))
+            for i, element in enumerate(line_elements[line]):
+                with cols[i]:
+                    case_sensitives[line][element] = st.checkbox(
+                        element,
+                        value=select_all_case,
+                        key=f"case_{line}_{element}"
+                    )
+
+# ---------------- Sidebar: Proxy + UA Mode ----------------
+st.sidebar.header("⚡ Settings")
+
+proxy_input = st.sidebar.text_input(
+    "Proxy (optional)",
+    placeholder="http://user:pass@host:port OR http://host:port"
+)
+proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
+
+ua_choice = st.sidebar.radio(
+    "User-Agent Mode",
+    ["Live Browser UA", "AdsBot-Google UA"],
+    index=0
+)
+
+# ---------------- User-Agent ----------------
+if ua_choice == "Live Browser UA":
+    LIVE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+else:
+    LIVE_UA = "Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)"
+
+st.sidebar.write(f"🟢 Using User-Agent: {LIVE_UA}")
+
+# ---------------- Global Session ----------------
 session = requests.Session()
-session.headers.update({"user-agent": LIVE_UA})
+session.headers.update({
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,/;q=0.8',
+    'accept-language': 'en-US,en;q=0.9',
+    'user-agent': LIVE_UA
+})
 if proxies:
     session.proxies.update(proxies)
 
-# ---------------- Fetch Helpers ----------------
-def fetch_with_retry(domain, ftype, retries=2, timeout=8):
-    urls = [f"https://{domain}/{ftype}", f"http://{domain}/{ftype}"]
+# ---------------- Fetch with retry (Updated for SSL handling) ----------------
+def fetch_with_retry(domain, max_retries=2, timeout=5):
+    urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
     last_error = None
     for url in urls:
-        for _ in range(retries):
+        for attempt in range(max_retries):
             try:
-                r = session.get(url, timeout=timeout, allow_redirects=True)
-                if r.status_code == 200:
-                    return r.text, None
+                response = session.get(url, timeout=timeout, allow_redirects=True)
+                if response.status_code == 200:
+                    return response.text, None
                 else:
-                    last_error = f"HTTP {r.status_code} for {url}"
+                    last_error = f"HTTP {response.status_code}"
+            except requests.exceptions.SSLError:
+                try:
+                    response = session.get(url, timeout=timeout, allow_redirects=True, verify=False)
+                    if response.status_code == 200:
+                        return response.text, None
+                    else:
+                        last_error = f"HTTP {response.status_code}"
+                except Exception as e:
+                    last_error = str(e)
             except Exception as e:
                 last_error = str(e)
-    return None, last_error or "No valid response"
+    return None, last_error
 
-def check_line_in_content(content, elements):
-    if not content:
-        return False
-    for c_line in content.splitlines():
-        if any(e.lower() in c_line.lower() for e in elements):
-            return True
+# ---------------- Check line content ----------------
+def check_line_in_content(content, line_elements, case_sensitives_line):
+    content_lines = content.splitlines()
+    cleaned_lines = [
+        re.split(r'\s*#', line.strip())[0].strip()
+        for line in content_lines
+        if line.strip() and not line.strip().startswith('#')
+    ]
+
+    for c_line in cleaned_lines:
+        content_parts = [e.strip() for e in c_line.split(',')]
+
+        if len(line_elements) == 1 and "," not in line_elements[0]:
+            element_to_find = line_elements[0]
+            if case_sensitives_line.get(element_to_find, False):
+                if element_to_find in c_line:
+                    return True
+            else:
+                if element_to_find.lower() in c_line.lower():
+                    return True
+        else:
+            all_match = True
+            for i, element_to_find in enumerate(line_elements):
+                if i >= len(content_parts):
+                    all_match = False
+                    break
+                content_element = content_parts[i]
+                if case_sensitives_line.get(element_to_find, False):
+                    if element_to_find != content_element:
+                        all_match = False
+                        break
+                else:
+                    if element_to_find.lower() != content_element.lower():
+                        all_match = False
+                        break
+            if all_match:
+                return True
     return False
 
-# ---------------- Data Manager ----------------
-st.sidebar.markdown("---")
-st.sidebar.header("🔧 Data Manager")
+# ---------------- Main Checking ----------------
+if st.button("🚀 Start Checking", disabled=not (domains and lines)):
+    start_time = time.time()
+    results = {"Page": domains}
+    for line in lines:
+        results[line] = [""] * len(domains)
+    errors = {}
 
-with st.sidebar.form("domain_form", clear_on_submit=False):
-    dm_domains = st.text_area("Domains to track", height=120, placeholder="hola.com\nsharechat.com")
-    dm_type = st.selectbox("File type", ["ads.txt", "app-ads.txt"])
-    dm_lines = st.text_area("Lines to monitor", height=120, placeholder="pubmatic.com\ngoogle.com")
-    submitted = st.form_submit_button("Add / Update Domains")
-    delete_domain = st.form_submit_button("Delete Domains")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-if submitted and dm_domains:
-    domain_list = [d.strip() for d in dm_domains.splitlines() if d.strip()]
-    lines_list = [l.strip() for l in dm_lines.splitlines() if l.strip()]
-    for d in domain_list:
-        data["domains"][d] = {"type": dm_type, "lines": lines_list}
-    save_local_data(data)
-    st.sidebar.success(f"✅ Added/Updated {len(domain_list)} domain(s).")
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        future_to_index = {executor.submit(fetch_with_retry, domain): idx for idx, domain in enumerate(domains)}
+        for processed, future in enumerate(as_completed(future_to_index), 1):
+            idx = future_to_index[future]
+            domain = domains[idx]
 
-if delete_domain and dm_domains:
-    domain_list = [d.strip() for d in dm_domains.splitlines() if d.strip()]
-    removed = 0
-    for d in domain_list:
-        if d in data["domains"]:
-            del data["domains"][d]
-            removed += 1
-    save_local_data(data)
-    st.sidebar.success(f"✅ Deleted {removed} domain(s)." if removed else "No matching domains found.")
+            try:
+                content, err = future.result()
+            except Exception as e:
+                content, err = None, str(e)
 
-# ---------------- Wipe Data Button ----------------
-st.sidebar.markdown("---")
-st.sidebar.header("🧨 Danger Zone")
+            if err:
+                errors[domain] = err
+                for line in lines:
+                    results[line][idx] = "Error"
+            else:
+                for line in lines:
+                    found = check_line_in_content(content, line_elements[line], case_sensitives[line])
+                    results[line][idx] = "Yes" if found else "No"
 
-if st.sidebar.button("⚠️ Wipe All Data (Full Reset)"):
-    confirm = st.sidebar.checkbox("☑️ Confirm wipe before proceeding")
-    if confirm:
-        try:
-            if os.path.exists(DATA_FILE):
-                os.remove(DATA_FILE)
-            st.session_state.data = {"domains": {}, "snapshots": {}}
-            save_local_data(st.session_state.data)
-            if st.secrets and "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
-                github_commit_datafile(st.session_state.data, commit_message="Manual wipe of data.json")
-            st.success("✅ data.json wiped successfully. App will reload.")
-            st.balloons()
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(f"Failed to wipe data: {e}")
-    else:
-        st.warning("Please check confirm box before wiping.")
+            progress_bar.progress(processed / len(domains))
+            status_text.text(f"Processed {processed}/{len(domains)} domains...")
 
-# ---------------- Tabs: Manual Checker + Daily Report ----------------
-tab_manual, tab_report = st.tabs(["🧠 Manual Checker", "📅 Daily Report"])
+    end_time = time.time()
+    st.success(f"🎉 Checking complete! Time taken: {end_time - start_time:.2f} seconds")
 
-# ----- Manual Checker -----
-with tab_manual:
-    st.header("🚀 Manual Check")
-    tab1, tab2 = st.tabs(["📋 Paste Domains", "📂 Upload Domains File"])
-    domains_input_from_ui = []
-    with tab1:
-        st.subheader("Input Domains")
-        domain_input = st.text_area("Domains (one per line)", height=200, placeholder="hola.com\nexample.com")
-        if domain_input:
-            domains_input_from_ui = [d.strip() for d in domain_input.splitlines() if d.strip()]
-    with tab2:
-        st.subheader("Upload Domains File")
-        uploaded_file = st.file_uploader("Upload CSV/TXT", type=["csv", "txt"])
-        if uploaded_file:
-            stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-            uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
-            domains_input_from_ui.extend(uploaded_domains)
-    domains_input_from_ui = list(dict.fromkeys(domains_input_from_ui))
+    st.subheader("📊 Results")
+    df = pd.DataFrame(results)
+    st.dataframe(df, use_container_width=True, height=400)
 
-    st.subheader("Search Lines")
-    line_input = st.text_area("Lines to search for", height=200, placeholder="pubmatic.com\ngoogle.com")
-    lines = [l.strip() for l in line_input.splitlines() if l.strip()]
-    file_type = st.selectbox("Select file type", ["ads.txt", "app-ads.txt"])
+    csv_data = df.to_csv(index=False).encode('utf-8')
+    st.download_button("💾 Download Results as CSV", data=csv_data, file_name="ads_txt_check_results.csv", mime="text/csv")
 
-    if st.button("Start Manual Check", disabled=not (domains_input_from_ui and lines)):
-        st.info(f"Checking {len(domains_input_from_ui)} domains...")
-        start = time.time()
-        results = {"Page": domains_input_from_ui}
-        for l in lines:
-            results[l] = [""] * len(domains_input_from_ui)
-        progress = st.progress(0)
-        with ThreadPoolExecutor(max_workers=30) as exe:
-            futs = {exe.submit(fetch_with_retry, d, file_type): i for i, d in enumerate(domains_input_from_ui)}
-            for processed, fut in enumerate(as_completed(futs), 1):
-                idx = futs[fut]
-                d = domains_input_from_ui[idx]
-                content, err = fut.result()
-                if err:
-                    for l in lines:
-                        results[l][idx] = "Error"
-                else:
-                    for l in lines:
-                        found = check_line_in_content(content, [l])
-                        results[l][idx] = "Yes" if found else "No"
-                progress.progress(processed / len(domains_input_from_ui))
-        df = pd.DataFrame(results)
-        st.success(f"✅ Done in {time.time()-start:.2f}s")
-        st.dataframe(df, use_container_width=True)
-        csv = df.to_csv(index=False).encode()
-        st.download_button("💾 Download Results", data=csv, file_name="manual_ads_check.csv", mime="text/csv")
+    if errors:
+        st.subheader("Errors")
+        error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
+        st.dataframe(error_df, use_container_width=True)
 
-# ----- Daily Report -----
-with tab_report:
-    st.header("📅 Daily Report (Tracked Domains)")
-    if st.button("Generate Daily Report"):
-        if not data["domains"]:
-            st.warning("No domains tracked.")
-        else:
-            today = datetime.date.today().isoformat()
-            domains = list(data["domains"].items())
-            report = {"Page": [d for d, _ in domains], "File Type": [info["type"] for _, info in domains]}
-            all_lines = sorted({l for info in data["domains"].values() for l in info["lines"]})
-            for l in all_lines:
-                report[l] = [""] * len(domains)
-            progress = st.progress(0)
-            with ThreadPoolExecutor(max_workers=20) as exe:
-                futures = {exe.submit(fetch_with_retry, d, info["type"]): (idx, d, info)
-                           for idx, (d, info) in enumerate(domains)}
-                for processed, fut in enumerate(as_completed(futures), 1):
-                    idx, d, info = futures[fut]
-                    content, err = fut.result()
-                    if err:
-                        for l in all_lines:
-                            report[l][idx] = "Error"
-                    else:
-                        for l in all_lines:
-                            elements = [e.strip() for e in l.split(",")] if "," in l else [l]
-                            found = check_line_in_content(content, elements)
-                            report[l][idx] = "Yes" if found else "No"
-                    progress.progress(processed / len(domains))
-            df = pd.DataFrame(report)
-            st.success("✅ Daily report generated.")
-            st.dataframe(df, use_container_width=True)
-            csv = df.to_csv(index=False).encode()
-            st.download_button("💾 Download Report", data=csv, file_name=f"daily_report_{today}.csv", mime="text/csv")
-
-# ---------------- Raw JSON ----------------
-with st.expander("🗄️ View raw data.json"):
-    st.json(data)
