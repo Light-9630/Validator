@@ -70,23 +70,20 @@ if proxies:
 # ---------------- Fetch Helpers ----------------
 def fetch_with_retry(domain, ftype, retries=2, timeout=8):
     urls = [f"https://{domain}/{ftype}", f"http://{domain}/{ftype}"]
+    last_error = None
     for url in urls:
         for _ in range(retries):
             try:
-                r = session.get(url, timeout=timeout, allow_redirects=True)
+                r = requests.get(url, timeout=timeout, allow_redirects=True)
                 if r.status_code == 200:
                     return r.text, None
+                else:
+                    last_error = f"HTTP {r.status_code} for {url}"
             except Exception as e:
-                err = str(e)
-    return None, err
+                last_error = str(e)
+    # If all attempts fail
+    return None, last_error or "No valid response"
 
-def check_line_in_content(content, elements):
-    if not content:
-        return False
-    for c_line in content.splitlines():
-        if any(e.lower() in c_line.lower() for e in elements):
-            return True
-    return False
 
 # ---------------- Data Manager ----------------
 st.sidebar.markdown("---")
@@ -231,3 +228,4 @@ with tab_report:
 # ---------------- Raw JSON ----------------
 with st.expander("🗄️ View raw data.json"):
     st.json(data)
+
