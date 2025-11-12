@@ -1,4 +1,4 @@
-# final_streamlit_ads_checker_resettable.py
+# final_streamlit_ads_checker_resettable_v2.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -50,57 +50,80 @@ def github_commit_datafile(data, commit_message="Update data.json"):
     return (resp.status_code in (200, 201)), resp.text
 
 # ---------------- Load Data ----------------
-data = load_data()
+if "data" not in st.session_state:
+    st.session_state.data = load_data()
+
+data = st.session_state.data
 data.setdefault("domains", {})
 data.setdefault("snapshots", {})
 
-# ---------------- Input Tabs ----------------
-tab1, tab2 = st.tabs(["📋 Paste Domains", "📂 Upload Domains File"])
-domains_input_from_ui = []
-
-with tab1:
-    st.header("Input Domains (one per line)")
-    domain_input = st.text_area("Paste domains", height=200, placeholder="hola.com\nexample.com")
-    if domain_input:
-        domains_input_from_ui = [d.strip() for d in domain_input.splitlines() if d.strip()]
-
-with tab2:
-    st.header("Upload File")
-    uploaded_file = st.file_uploader("Upload CSV/TXT file", type=["csv", "txt"])
-    if uploaded_file:
-        stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-        uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
-        domains_input_from_ui.extend(uploaded_domains)
-
-domains_input_from_ui = list(dict.fromkeys(domains_input_from_ui))
-if domains_input_from_ui:
-    st.info(f"✅ {len(domains_input_from_ui)} unique domains loaded.")
-
-# ---------------- Search Lines ----------------
-st.header("🔍 Search Lines")
-line_input = st.text_area("Paste search lines", height=200)
-file_type = st.selectbox("Select file type", ["ads.txt", "app-ads.txt"])
-
-lines = [l.strip() for l in line_input.splitlines() if l.strip()]
-line_elements = {line: [line] for line in lines}
-
 # ---------------- Sidebar ----------------
-st.sidebar.header("⚡ Settings")
+st.sidebar.header("⚙️ Settings")
 proxy_input = st.sidebar.text_input("Proxy (optional)", placeholder="http://host:port")
 proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
-ua_choice = st.sidebar.radio("User-Agent Mode", ["Live Browser UA", "AdsBot-Google UA"], index=0)
-
+ua_choice = st.sidebar.radio("User-Agent", ["Live Browser UA", "AdsBot-Google UA"], index=0)
 LIVE_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141 Safari/537.36"
     if ua_choice == "Live Browser UA"
     else "Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)"
 )
-st.sidebar.write(f"🟢 UA: {LIVE_UA}")
+st.sidebar.caption(f"🟢 Using UA: {LIVE_UA}")
 
 session = requests.Session()
 session.headers.update({"user-agent": LIVE_UA})
 if proxies:
     session.proxies.update(proxies)
+
+# ---------------- Data Manager ----------------
+st.sidebar.markdown("---")
+st.sidebar.header("🔧 Data Manager")
+
+with st.sidebar.form("domain_form", clear_on_submit=False):
+    dm_domains = st.text_area("Domains to track", height=120, placeholder="hola.com\nsharechat.com")
+    dm_type = st.selectbox("File type", ["ads.txt", "app-ads.txt"])
+    dm_lines = st.text_area("Lines to monitor", height=120, placeholder="pubmatic.com\ngoogle.com")
+    submitted = st.form_submit_button("Add / Update Domains")
+    delete_domain = st.form_submit_button("Delete Domains")
+
+if submitted and dm_domains:
+    domain_list = [d.strip() for d in dm_domains.splitlines() if d.strip()]
+    lines_list = [l.strip() for l in dm_lines.splitlines() if l.strip()]
+    for d in domain_list:
+        data["domains"][d] = {"type": dm_type, "lines": lines_list}
+    save_local_data(data)
+    st.sidebar.success(f"Added/Updated {len(domain_list)} domain(s).")
+
+if delete_domain and dm_domains:
+    domain_list = [d.strip() for d in dm_domains.splitlines() if d.strip()]
+    removed = 0
+    for d in domain_list:
+        if d in data["domains"]:
+            data["domains"].pop(d)
+            removed += 1
+    save_local_data(data)
+    st.sidebar.success(f"Deleted {removed} domain(s)." if removed else "No domains found.")
+
+# ---------------- Wipe JSON ----------------
+st.sidebar.markdown("---")
+st.sidebar.header("🧨 Danger Zone")
+
+if "confirm_reset" not in st.session_state:
+    st.session_state.confirm_reset = False
+
+if not st.session_state.confirm_reset:
+    if st.sidebar.button("⚠️ Wipe All Data (Reset JSON)"):
+        st.session_state.confirm_reset = True
+        st.sidebar.warning("Click again below to confirm data wipe.")
+else:
+    if st.sidebar.button("🚨 Confirm and Wipe Now"):
+        data = {"domains": {}, "snapshots": {}}
+        save_local_data(data)
+        st.session_state.data = data
+        st.session_state.confirm_reset = False
+        if st.secrets and "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
+            github_commit_datafile(data, commit_message="Wiped data.json manually")
+        st.sidebar.success("✅ All data wiped successfully! Please refresh the app.")
+        st.stop()
 
 # ---------------- Fetch ----------------
 def fetch_with_retry(domain, ftype, session_local=session, retries=2, timeout=8):
@@ -122,50 +145,6 @@ def check_line_in_content(content, elements):
         if any(e.lower() in c_line.lower() for e in elements):
             return True
     return False
-
-# ---------------- Data Manager ----------------
-st.sidebar.markdown("---")
-st.sidebar.header("🔧 Data Manager")
-
-with st.sidebar.form("domain_form", clear_on_submit=False):
-    dm_domains = st.text_area("Domains to track", height=120, placeholder="hola.com\nsharechat.com")
-    dm_type = st.selectbox("File type", ["ads.txt", "app-ads.txt"])
-    dm_lines = st.text_area("Lines to monitor", height=120, placeholder="pubmatic.com\ngoogle.com")
-    submitted = st.form_submit_button("Add / Update Domains")
-    delete_domain = st.form_submit_button("Delete Domains")
-
-if submitted and dm_domains:
-    domain_list = [d.strip() for d in dm_domains.splitlines() if d.strip()]
-    lines_list = [l.strip() for l in dm_lines.splitlines() if l.strip()]
-    for d in domain_list:
-        data["domains"][d] = {"type": dm_type, "lines": lines_list}
-    save_local_data(data)
-    st.sidebar.success(f"Added/Updated {len(domain_list)} domains.")
-
-if delete_domain and dm_domains:
-    domain_list = [d.strip() for d in dm_domains.splitlines() if d.strip()]
-    removed = 0
-    for d in domain_list:
-        if d in data["domains"]:
-            data["domains"].pop(d)
-            removed += 1
-    save_local_data(data)
-    st.sidebar.success(f"Deleted {removed} domains." if removed else "No domains found.")
-
-# ---------------- Wipe JSON Section ----------------
-st.sidebar.markdown("---")
-st.sidebar.header("🧨 Danger Zone")
-
-if st.sidebar.button("Wipe All Data (Reset JSON)"):
-    confirm = st.sidebar.checkbox("⚠️ Confirm wipe (this cannot be undone!)")
-    if confirm:
-        data = {"domains": {}, "snapshots": {}}
-        save_local_data(data)
-        if st.secrets and "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
-            github_commit_datafile(data, commit_message="Wiped data.json (manual reset)")
-        st.sidebar.success("✅ data.json has been completely wiped clean.")
-    else:
-        st.sidebar.warning("Please confirm the wipe first.")
 
 # ---------------- Daily Report ----------------
 st.header("📅 Daily Report (Tracked Domains)")
@@ -202,36 +181,6 @@ if st.button("🗓️ Generate Today's Report"):
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False).encode()
         st.download_button("💾 Download Report", data=csv, file_name=f"daily_report_{today}.csv", mime="text/csv")
-
-# ---------------- Manual Ad-hoc Check ----------------
-st.markdown("---")
-st.header("🚀 Ad-hoc Checking")
-if st.button("Start Checking", disabled=not (domains_input_from_ui and lines)):
-    start = time.time()
-    results = {"Page": domains_input_from_ui}
-    for l in lines:
-        results[l] = [""] * len(domains_input_from_ui)
-    progress = st.progress(0)
-    with ThreadPoolExecutor(max_workers=30) as exe:
-        futs = {exe.submit(fetch_with_retry, d, file_type): i for i, d in enumerate(domains_input_from_ui)}
-        for processed, fut in enumerate(as_completed(futs), 1):
-            idx = futs[fut]
-            d = domains_input_from_ui[idx]
-            content, err = fut.result()
-            if err:
-                for l in lines:
-                    results[l][idx] = "Error"
-            else:
-                for l in lines:
-                    found = check_line_in_content(content, [l])
-                    results[l][idx] = "Yes" if found else "No"
-            progress.progress(processed / len(domains_input_from_ui))
-
-    df = pd.DataFrame(results)
-    st.success(f"Done in {time.time()-start:.2f}s")
-    st.dataframe(df)
-    csv = df.to_csv(index=False).encode()
-    st.download_button("💾 Download CSV", data=csv, file_name="ads_txt_results.csv", mime="text/csv")
 
 # ---------------- Raw Data ----------------
 with st.expander("🗄️ View raw data.json"):
