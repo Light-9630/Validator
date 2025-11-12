@@ -1,19 +1,13 @@
-# final_streamlit_ads_checker_resettable_v2.py
+# final_streamlit_ads_checker_resettable_v3.py
 import streamlit as st
 import pandas as pd
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
+import time, json, os, re, datetime, base64
 from io import StringIO
-import re
-import os
-import json
-import datetime
-import base64
 
-# ---------------- Page Setup ----------------
-st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
-st.title("🔎 Ads.txt / App-ads.txt Bulk Checker")
+st.set_page_config(page_title="Ads.txt / App-Ads.txt Bulk Checker", layout="wide")
+st.title("🔎 Ads.txt / App-Ads.txt Bulk Checker")
 
 DATA_FILE = "data.json"
 DEFAULT_BRANCH = "main"
@@ -25,7 +19,7 @@ def load_data():
             with open(DATA_FILE, "r") as f:
                 return json.load(f)
         except Exception:
-            return {"domains": {}, "snapshots": {}}
+            pass
     return {"domains": {}, "snapshots": {}}
 
 def save_local_data(data):
@@ -57,25 +51,7 @@ data = st.session_state.data
 data.setdefault("domains", {})
 data.setdefault("snapshots", {})
 
-# ---------------- Sidebar ----------------
-st.sidebar.header("⚙️ Settings")
-proxy_input = st.sidebar.text_input("Proxy (optional)", placeholder="http://host:port")
-proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
-ua_choice = st.sidebar.radio("User-Agent", ["Live Browser UA", "AdsBot-Google UA"], index=0)
-LIVE_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141 Safari/537.36"
-    if ua_choice == "Live Browser UA"
-    else "Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)"
-)
-st.sidebar.caption(f"🟢 Using UA: {LIVE_UA}")
-
-session = requests.Session()
-session.headers.update({"user-agent": LIVE_UA})
-if proxies:
-    session.proxies.update(proxies)
-
-# ---------------- Data Manager ----------------
-st.sidebar.markdown("---")
+# ---------------- Sidebar: Data Manager ----------------
 st.sidebar.header("🔧 Data Manager")
 
 with st.sidebar.form("domain_form", clear_on_submit=False):
@@ -91,52 +67,55 @@ if submitted and dm_domains:
     for d in domain_list:
         data["domains"][d] = {"type": dm_type, "lines": lines_list}
     save_local_data(data)
-    st.sidebar.success(f"Added/Updated {len(domain_list)} domain(s).")
+    st.sidebar.success(f"✅ Added/Updated {len(domain_list)} domain(s).")
 
 if delete_domain and dm_domains:
     domain_list = [d.strip() for d in dm_domains.splitlines() if d.strip()]
     removed = 0
     for d in domain_list:
         if d in data["domains"]:
-            data["domains"].pop(d)
+            del data["domains"][d]
             removed += 1
     save_local_data(data)
-    st.sidebar.success(f"Deleted {removed} domain(s)." if removed else "No domains found.")
+    st.sidebar.success(f"✅ Deleted {removed} domain(s)." if removed else "No matching domains found.")
 
-# ---------------- Wipe JSON ----------------
+# ---------------- Danger Zone: Wipe JSON ----------------
 st.sidebar.markdown("---")
 st.sidebar.header("🧨 Danger Zone")
 
-if "confirm_reset" not in st.session_state:
-    st.session_state.confirm_reset = False
+if st.sidebar.button("⚠️ Wipe All Data (Full Reset)"):
+    confirm = st.sidebar.checkbox("☑️ Confirm wipe (cannot be undone)")
+    if confirm:
+        # Forcefully overwrite file on disk
+        try:
+            with open(DATA_FILE, "w") as f:
+                f.write(json.dumps({"domains": {}, "snapshots": {}}, indent=2))
+            st.session_state.data = {"domains": {}, "snapshots": {}}
+            save_local_data(st.session_state.data)
+            # Optional GitHub commit
+            if st.secrets and "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
+                github_commit_datafile(st.session_state.data, commit_message="Manual wipe of data.json")
+            st.success("✅ data.json wiped successfully.")
+            st.balloons()
+            # Force refresh Streamlit
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Failed to wipe data: {e}")
+    else:
+        st.warning("Please tick the confirm checkbox before wiping.")
 
-if not st.session_state.confirm_reset:
-    if st.sidebar.button("⚠️ Wipe All Data (Reset JSON)"):
-        st.session_state.confirm_reset = True
-        st.sidebar.warning("Click again below to confirm data wipe.")
-else:
-    if st.sidebar.button("🚨 Confirm and Wipe Now"):
-        data = {"domains": {}, "snapshots": {}}
-        save_local_data(data)
-        st.session_state.data = data
-        st.session_state.confirm_reset = False
-        if st.secrets and "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
-            github_commit_datafile(data, commit_message="Wiped data.json manually")
-        st.sidebar.success("✅ All data wiped successfully! Please refresh the app.")
-        st.stop()
-
-# ---------------- Fetch ----------------
-def fetch_with_retry(domain, ftype, session_local=session, retries=2, timeout=8):
+# ---------------- Fetching Utility ----------------
+def fetch_with_retry(domain, ftype, retries=2, timeout=8):
     urls = [f"https://{domain}/{ftype}", f"http://{domain}/{ftype}"]
     for url in urls:
         for _ in range(retries):
             try:
-                r = session_local.get(url, timeout=timeout, allow_redirects=True)
+                r = requests.get(url, timeout=timeout, allow_redirects=True)
                 if r.status_code == 200:
                     return r.text, None
             except Exception as e:
-                last_error = str(e)
-    return None, last_error
+                err = str(e)
+    return None, err
 
 def check_line_in_content(content, elements):
     if not content:
@@ -182,6 +161,6 @@ if st.button("🗓️ Generate Today's Report"):
         csv = df.to_csv(index=False).encode()
         st.download_button("💾 Download Report", data=csv, file_name=f"daily_report_{today}.csv", mime="text/csv")
 
-# ---------------- Raw Data ----------------
+# ---------------- Raw JSON Viewer ----------------
 with st.expander("🗄️ View raw data.json"):
     st.json(data)
