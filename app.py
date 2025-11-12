@@ -251,11 +251,20 @@ st.sidebar.markdown("---")
 st.sidebar.header("🔧 Data Manager (Persistent Tracker)")
 
 with st.sidebar.form("domain_form", clear_on_submit=False):
-    dm_domain = st.text_input("Domain to track (e.g. hola.com)")
-    dm_type = st.selectbox("File type", ["ads.txt", "app-ads.txt"])
-    dm_lines = st.text_area("Lines to monitor (one per line)", height=120, placeholder="pubmatic.com\ngoogle.com")
-    submitted = st.form_submit_button("Add / Update Domain")
-    delete_domain = st.form_submit_button("Delete Domain")
+   dm_domains = st.text_area(
+    "Domains to track (one per line)",
+    height=120,
+    placeholder="hola.com\nsharechat.com\nm.daily"
+)
+   dm_type = st.selectbox("File type", ["ads.txt", "app-ads.txt"])
+   dm_lines = st.text_area(
+    "Lines to monitor (one per line)",
+    height=120,
+    placeholder="pubmatic.com\ngoogle.com"
+)
+   submitted = st.form_submit_button("Add / Update Domain(s)")
+   delete_domain = st.form_submit_button("Delete Domain(s)")
+
 
 if submitted and dm_domain:
     lines_list = [l.strip() for l in dm_lines.splitlines() if l.strip()]
@@ -456,3 +465,4 @@ if st.button("Start Checking (ad-hoc)", disabled=not (domains_input_from_ui and 
 # ---------------- Show raw data.json contents (for debugging) ----------------
 with st.expander("🗄️ View raw data.json (domains & snapshots)"):
     st.json(data)
+
