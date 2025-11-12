@@ -1,4 +1,4 @@
-# final_streamlit_ads_checker_with_filetype.py
+# final_streamlit_ads_checker_resettable.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -115,7 +115,6 @@ def fetch_with_retry(domain, ftype, session_local=session, retries=2, timeout=8)
                 last_error = str(e)
     return None, last_error
 
-# ---------------- Check Line ----------------
 def check_line_in_content(content, elements):
     if not content:
         return False
@@ -153,6 +152,21 @@ if delete_domain and dm_domains:
     save_local_data(data)
     st.sidebar.success(f"Deleted {removed} domains." if removed else "No domains found.")
 
+# ---------------- Wipe JSON Section ----------------
+st.sidebar.markdown("---")
+st.sidebar.header("🧨 Danger Zone")
+
+if st.sidebar.button("Wipe All Data (Reset JSON)"):
+    confirm = st.sidebar.checkbox("⚠️ Confirm wipe (this cannot be undone!)")
+    if confirm:
+        data = {"domains": {}, "snapshots": {}}
+        save_local_data(data)
+        if st.secrets and "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
+            github_commit_datafile(data, commit_message="Wiped data.json (manual reset)")
+        st.sidebar.success("✅ data.json has been completely wiped clean.")
+    else:
+        st.sidebar.warning("Please confirm the wipe first.")
+
 # ---------------- Daily Report ----------------
 st.header("📅 Daily Report (Tracked Domains)")
 if st.button("🗓️ Generate Today's Report"):
@@ -166,9 +180,7 @@ if st.button("🗓️ Generate Today's Report"):
         for l in all_lines:
             report[l] = [""] * len(domains)
 
-        errors = {}
         progress = st.progress(0)
-
         with ThreadPoolExecutor(max_workers=20) as exe:
             futures = {exe.submit(fetch_with_retry, d, info["type"]): (idx, d, info)
                        for idx, (d, info) in enumerate(domains)}
@@ -176,7 +188,6 @@ if st.button("🗓️ Generate Today's Report"):
                 idx, d, info = futures[fut]
                 content, err = fut.result()
                 if err:
-                    errors[d] = err
                     for l in all_lines:
                         report[l][idx] = "Error"
                 else:
@@ -200,19 +211,14 @@ if st.button("Start Checking", disabled=not (domains_input_from_ui and lines)):
     results = {"Page": domains_input_from_ui}
     for l in lines:
         results[l] = [""] * len(domains_input_from_ui)
-    errors = {}
     progress = st.progress(0)
     with ThreadPoolExecutor(max_workers=30) as exe:
         futs = {exe.submit(fetch_with_retry, d, file_type): i for i, d in enumerate(domains_input_from_ui)}
         for processed, fut in enumerate(as_completed(futs), 1):
             idx = futs[fut]
             d = domains_input_from_ui[idx]
-            try:
-                content, err = fut.result()
-            except Exception as e:
-                content, err = None, str(e)
+            content, err = fut.result()
             if err:
-                errors[d] = err
                 for l in lines:
                     results[l][idx] = "Error"
             else:
@@ -227,5 +233,6 @@ if st.button("Start Checking", disabled=not (domains_input_from_ui and lines)):
     csv = df.to_csv(index=False).encode()
     st.download_button("💾 Download CSV", data=csv, file_name="ads_txt_results.csv", mime="text/csv")
 
+# ---------------- Raw Data ----------------
 with st.expander("🗄️ View raw data.json"):
     st.json(data)
