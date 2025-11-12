@@ -266,32 +266,32 @@ with st.sidebar.form("domain_form", clear_on_submit=False):
    delete_domain = st.form_submit_button("Delete Domain(s)")
 
 
-if submitted and dm_domain:
+if submitted and dm_domains:
     lines_list = [l.strip() for l in dm_lines.splitlines() if l.strip()]
-    data["domains"][dm_domain.strip()] = {"type": dm_type, "lines": lines_list}
+    data["domains"][dm_domains.strip()] = {"type": dm_type, "lines": lines_list}
     save_local_data(data)
     # attempt GitHub commit if secrets present
     if st.secrets and "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
-        ok, msg = github_commit_datafile(data, commit_message=f"Streamlit: add/update domain {dm_domain.strip()}")
+        ok, msg = github_commit_datafile(data, commit_message=f"Streamlit: add/update domain {dm_domains.strip()}")
         if ok:
-            st.sidebar.success(f"Saved and committed to GitHub: {dm_domain.strip()}")
+            st.sidebar.success(f"Saved and committed to GitHub: {dm_domains.strip()}")
         else:
             st.sidebar.warning(f"Saved locally but GitHub commit failed: {msg}")
     else:
-        st.sidebar.success(f"Saved locally: {dm_domain.strip()}")
+        st.sidebar.success(f"Saved locally: {dm_domains.strip()}")
 
-if delete_domain and dm_domain:
-    if dm_domain.strip() in data["domains"]:
-        data["domains"].pop(dm_domain.strip(), None)
+if delete_domain and dm_domains:
+    if dm_domains.strip() in data["domains"]:
+        data["domains"].pop(dm_domains.strip(), None)
         save_local_data(data)
         if st.secrets and "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
-            ok, msg = github_commit_datafile(data, commit_message=f"Streamlit: delete domain {dm_domain.strip()}")
+            ok, msg = github_commit_datafile(data, commit_message=f"Streamlit: delete domain {dm_domains.strip()}")
             if ok:
-                st.sidebar.success(f"Deleted and committed to GitHub: {dm_domain.strip()}")
+                st.sidebar.success(f"Deleted and committed to GitHub: {dm_domains.strip()}")
             else:
                 st.sidebar.warning(f"Deleted locally but GitHub commit failed: {msg}")
         else:
-            st.sidebar.success(f"Deleted locally: {dm_domain.strip()}")
+            st.sidebar.success(f"Deleted locally: {dm_domains.strip()}")
     else:
         st.sidebar.warning("Domain not found in tracked list.")
 
@@ -465,4 +465,5 @@ if st.button("Start Checking (ad-hoc)", disabled=not (domains_input_from_ui and 
 # ---------------- Show raw data.json contents (for debugging) ----------------
 with st.expander("🗄️ View raw data.json (domains & snapshots)"):
     st.json(data)
+
 
