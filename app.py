@@ -171,7 +171,7 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
             try:
 
                 # random delay
-                time.sleep(random.uniform(0.2, 1.2))
+                time.sleep(random.uniform(0.05, 0.2))
 
                 # rotate UA
                 random_ua = random.choice(USER_AGENTS)
@@ -303,7 +303,7 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     status_text = st.empty()
 
     # reduced thread count to reduce 403s
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=15) as executor:
 
         future_to_index = {
             executor.submit(fetch_with_retry, domain): idx
