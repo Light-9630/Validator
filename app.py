@@ -132,10 +132,28 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
     return None, last_error
 
 # ---------------- Check line content ----------------
-# ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
+
     if not content:
         return False
+
+    # rebuild original search line
+    search_line = ",".join(line_elements)
+
+    # normalize spaces
+    search_line = re.sub(r"\s*,\s*", ",", search_line.strip())
+
+    # escape regex chars
+    regex_pattern = re.escape(search_line)
+
+    # replace EVERY <any> with single-field wildcard
+    regex_pattern = regex_pattern.replace(r"\<any\>", r"[^,]+")
+
+    # allow flexible spaces around commas
+    regex_pattern = regex_pattern.replace(r"\,", r"\s*,\s*")
+
+    # match full line
+    regex_pattern = f"^{regex_pattern}$"
 
     content_lines = content.splitlines()
 
@@ -147,52 +165,18 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
 
     for c_line in cleaned_lines:
 
-        # normalize spaces around commas
         cleaned = re.sub(r"\s*,\s*", ",", c_line.strip())
 
-        content_parts = [e.strip() for e in cleaned.split(',')]
-
-        # single keyword search
-        if len(line_elements) == 1 and "," not in line_elements[0]:
-            element_to_find = line_elements[0]
-
-            if case_sensitives_line.get(element_to_find, False):
-                if element_to_find in cleaned:
-                    return True
-            else:
-                if element_to_find.lower() in cleaned.lower():
-                    return True
-
+        # case sensitive?
+        if any(case_sensitives_line.values()):
+            flags = 0
         else:
-            all_match = True
+            flags = re.IGNORECASE
 
-            for i, element_to_find in enumerate(line_elements):
-
-                if i >= len(content_parts):
-                    all_match = False
-                    break
-
-                content_element = content_parts[i].strip()
-
-                # ---------------- <any> wildcard support ----------------
-                if element_to_find.lower() == "<any>":
-                    continue
-
-                # ---------------- Normal matching ----------------
-                if case_sensitives_line.get(element_to_find, False):
-                    if element_to_find != content_element:
-                        all_match = False
-                        break
-                else:
-                    if element_to_find.lower() != content_element.lower():
-                        all_match = False
-                        break
-
-            if all_match:
-                return True
+        if re.search(regex_pattern, cleaned, flags):
+            return True
 
     return False
-
 # ---------------- Main Checking ----------------
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     start_time = time.time()
