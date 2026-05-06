@@ -56,7 +56,9 @@ line_input = st.text_area(
     height=200
 )
 
-st.caption("Wildcard supported using <any>")
+st.caption(
+    "Use <any> as wildcard for any field.\n"
+    "Example: google.com,<any>,DIRECT,<any>")
 
 # ---------------- File type selection ----------------
 file_type = st.selectbox(
