@@ -19,6 +19,7 @@ domains = []
 with tab1:
     st.header("Input Domains")
     domain_input = st.text_area("Paste domains (one per line)", height=200)
+    st.caption("Use 100 Domains per search for accurate and faster result")
 
     if domain_input:
         domains = [d.strip() for d in domain_input.splitlines() if d.strip()]
