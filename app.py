@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from io import StringIO
 import re
+import random
 
 # ---------------- Page Setup ----------------
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
@@ -122,39 +123,33 @@ proxy_input = st.sidebar.text_input(
 
 proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
 
-ua_choice = st.sidebar.radio(
-    "User-Agent Mode",
-    ["Live Browser UA", "AdsBot-Google UA"],
-    index=0
-)
-
-# ---------------- User-Agent ----------------
-if ua_choice == "Live Browser UA":
-
-    LIVE_UA = (
+# ---------------- User Agent Pool ----------------
+USER_AGENTS = [
+    (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/141.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/140.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) "
+        "Gecko/20100101 Firefox/140.0"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/18.0 Safari/605.1.15"
     )
+]
 
-else:
-
-    LIVE_UA = (
-        "Mozilla/5.0 "
-        "(compatible; AdsBot-Google; "
-        "+http://www.google.com/adsbot.html)"
-    )
-
-st.sidebar.write(f"🟢 Using User-Agent: {LIVE_UA}")
+st.sidebar.write("🟢 Rotating Browser User-Agents Enabled")
 
 # ---------------- Global Session ----------------
 session = requests.Session()
-
-session.headers.update({
-    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'accept-language': 'en-US,en;q=0.9',
-    'user-agent': LIVE_UA
-})
 
 if proxies:
     session.proxies.update(proxies)
@@ -175,10 +170,31 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
             try:
 
+                # random delay
+                time.sleep(random.uniform(0.2, 1.2))
+
+                # rotate UA
+                random_ua = random.choice(USER_AGENTS)
+
+                headers = {
+                    "User-Agent": random_ua,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept-Encoding": "gzip, deflate, br",
+                    "Connection": "keep-alive",
+                    "Upgrade-Insecure-Requests": "1",
+                    "Cache-Control": "max-age=0",
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "none",
+                    "Sec-Fetch-User": "?1",
+                }
+
                 response = session.get(
                     url,
                     timeout=timeout,
-                    allow_redirects=True
+                    allow_redirects=True,
+                    headers=headers
                 )
 
                 if response.status_code == 200:
@@ -195,7 +211,8 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                         url,
                         timeout=timeout,
                         allow_redirects=True,
-                        verify=False
+                        verify=False,
+                        headers=headers
                     )
 
                     if response.status_code == 200:
@@ -285,7 +302,8 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
 
     status_text = st.empty()
 
-    with ThreadPoolExecutor(max_workers=30) as executor:
+    # reduced thread count to reduce 403s
+    with ThreadPoolExecutor(max_workers=10) as executor:
 
         future_to_index = {
             executor.submit(fetch_with_retry, domain): idx
