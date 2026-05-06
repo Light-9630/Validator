@@ -137,16 +137,12 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
     if not content:
         return False
 
-    # rebuild original line
-    search_line = ",".join(line_elements)
-
-    # normalize spaces
-    search_line = re.sub(r"\s*,\s*", ",", search_line.strip())
+    # rebuild original search line
+    search_line = ",".join(line_elements).strip()
 
     # split search fields
     search_parts = [p.strip() for p in search_line.split(",")]
 
-    # build regex safely
     regex_parts = []
 
     for part in search_parts:
@@ -155,13 +151,13 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         if part.lower() == "<any>":
             regex_parts.append(r"[^,]+")
         else:
-            regex_parts.append(re.escape(part))
+            regex_parts.append(re.escape(part.strip()))
 
-    # join fields with flexible comma spacing
+    # allow spaces around commas
     regex_pattern = r"\s*,\s*".join(regex_parts)
 
     # full line match
-    regex_pattern = f"^{regex_pattern}$"
+    regex_pattern = rf"^{regex_pattern}$"
 
     content_lines = content.splitlines()
 
@@ -171,14 +167,12 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         if line.strip() and not line.strip().startswith('#')
     ]
 
+    # case sensitivity
+    flags = 0 if any(case_sensitives_line.values()) else re.IGNORECASE
+
     for c_line in cleaned_lines:
 
-        cleaned = re.sub(r"\s*,\s*", ",", c_line.strip())
-
-        # case sensitivity
-        flags = 0 if any(case_sensitives_line.values()) else re.IGNORECASE
-
-        if re.search(regex_pattern, cleaned, flags):
+        if re.search(regex_pattern, c_line.strip(), flags):
             return True
 
     return False
