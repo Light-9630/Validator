@@ -132,8 +132,13 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
     return None, last_error
 
 # ---------------- Check line content ----------------
+# ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
+    if not content:
+        return False
+
     content_lines = content.splitlines()
+
     cleaned_lines = [
         re.split(r'\s*#', line.strip())[0].strip()
         for line in content_lines
@@ -141,23 +146,39 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
     ]
 
     for c_line in cleaned_lines:
-        content_parts = [e.strip() for e in c_line.split(',')]
 
+        # normalize spaces around commas
+        cleaned = re.sub(r"\s*,\s*", ",", c_line.strip())
+
+        content_parts = [e.strip() for e in cleaned.split(',')]
+
+        # single keyword search
         if len(line_elements) == 1 and "," not in line_elements[0]:
             element_to_find = line_elements[0]
+
             if case_sensitives_line.get(element_to_find, False):
-                if element_to_find in c_line:
+                if element_to_find in cleaned:
                     return True
             else:
-                if element_to_find.lower() in c_line.lower():
+                if element_to_find.lower() in cleaned.lower():
                     return True
+
         else:
             all_match = True
+
             for i, element_to_find in enumerate(line_elements):
+
                 if i >= len(content_parts):
                     all_match = False
                     break
-                content_element = content_parts[i]
+
+                content_element = content_parts[i].strip()
+
+                # ---------------- <any> wildcard support ----------------
+                if element_to_find.lower() == "<any>":
+                    continue
+
+                # ---------------- Normal matching ----------------
                 if case_sensitives_line.get(element_to_find, False):
                     if element_to_find != content_element:
                         all_match = False
@@ -166,8 +187,10 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
                     if element_to_find.lower() != content_element.lower():
                         all_match = False
                         break
+
             if all_match:
                 return True
+
     return False
 
 # ---------------- Main Checking ----------------
