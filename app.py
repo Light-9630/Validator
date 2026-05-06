@@ -132,32 +132,11 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
     return None, last_error
 
 # ---------------- Check line content ----------------
+# ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
 
     if not content:
         return False
-
-    # rebuild original search line
-    search_line = ",".join(line_elements).strip()
-
-    # split search fields
-    search_parts = [p.strip() for p in search_line.split(",")]
-
-    regex_parts = []
-
-    for part in search_parts:
-
-        # wildcard support
-        if part.lower() == "<any>":
-            regex_parts.append(r"[^,]+")
-        else:
-            regex_parts.append(re.escape(part.strip()))
-
-    # allow spaces around commas
-    regex_pattern = r"\s*,\s*".join(regex_parts)
-
-    # full line match
-    regex_pattern = rf"^{regex_pattern}$"
 
     content_lines = content.splitlines()
 
@@ -167,12 +146,39 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         if line.strip() and not line.strip().startswith('#')
     ]
 
-    # case sensitivity
-    flags = 0 if any(case_sensitives_line.values()) else re.IGNORECASE
-
     for c_line in cleaned_lines:
 
-        if re.search(regex_pattern, c_line.strip(), flags):
+        content_parts = [e.strip() for e in c_line.split(',')]
+
+        all_match = True
+
+        for i, search_element in enumerate(line_elements):
+
+            # field missing
+            if i >= len(content_parts):
+                all_match = False
+                break
+
+            content_element = content_parts[i].strip()
+
+            # ---------------- WILDCARD SUPPORT ----------------
+            if search_element.strip().lower() == "<any>":
+                continue
+
+            # ---------------- NORMAL MATCH ----------------
+            if case_sensitives_line.get(search_element, False):
+
+                if search_element.strip() != content_element:
+                    all_match = False
+                    break
+
+            else:
+
+                if search_element.strip().lower() != content_element.lower():
+                    all_match = False
+                    break
+
+        if all_match:
             return True
 
     return False
