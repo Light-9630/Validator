@@ -14,63 +14,102 @@ st.title("🔎 Ads.txt / App-ads.txt Bulk Checker")
 tab1, tab2 = st.tabs(["📋 Paste Domains", "📂 Upload Domains File"])
 
 domains = []
+
 with tab1:
     st.header("Input Domains")
     domain_input = st.text_area("Paste domains (one per line)", height=200)
+
     if domain_input:
         domains = [d.strip() for d in domain_input.splitlines() if d.strip()]
 
 with tab2:
     st.header("Upload File")
-    uploaded_file = st.file_uploader("Upload CSV/TXT file with domains", type=["csv", "txt"])
+
+    uploaded_file = st.file_uploader(
+        "Upload CSV/TXT file with domains",
+        type=["csv", "txt"]
+    )
+
     if uploaded_file:
         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-        uploaded_domains = [line.strip() for line in stringio.readlines() if line.strip()]
+
+        uploaded_domains = [
+            line.strip()
+            for line in stringio.readlines()
+            if line.strip()
+        ]
+
         domains.extend(uploaded_domains)
 
 # Deduplicate but preserve order
 domains = list(dict.fromkeys(domains))
+
 if domains:
     st.info(f"✅ {len(domains)} unique domains loaded.")
 
 # ---------------- Search Lines ----------------
 st.header("🔍 Search Lines")
-line_input = st.text_area("Paste search lines (CSV format or single word/number, one per line)", height=200)
+
+line_input = st.text_area(
+    "Paste search lines (CSV format or single word/number, one per line)",
+    height=200
+)
+
+st.caption("Wildcard supported using <any>")
 
 # ---------------- File type selection ----------------
-file_type = st.selectbox("Select file type", ["ads.txt", "app-ads.txt"])
+file_type = st.selectbox(
+    "Select file type",
+    ["ads.txt", "app-ads.txt"]
+)
 
 # ---------------- Field Limit Selection ----------------
 field_limit = st.selectbox(
     "Select number of fields to check",
     [1, 2, 3, 4],
-    index=1  # default = 2
+    index=1
 )
 
 # ---------------- Process Lines ----------------
 lines = [l.strip() for l in line_input.splitlines() if l.strip()]
+
 case_sensitives = {}
 line_elements = {}
 
 if lines:
+
     with st.expander("⚙ Line Settings", expanded=True):
-        select_all_case = st.checkbox("Select all elements as case-sensitive", value=False)
+
+        select_all_case = st.checkbox(
+            "Select all elements as case-sensitive",
+            value=False
+        )
+
         for line in lines:
+
             if "," in line:
-                elements = [e.strip() for e in line.split(',') if e.strip()]
+                elements = [e.strip() for e in line.split(",")]
             else:
                 elements = [line]
+
             line_elements[line] = elements[:field_limit]
+
             case_sensitives[line] = {}
 
             st.markdown(f"**Line: {line}**")
+
             cols = st.columns(len(line_elements[line]))
+
             for i, element in enumerate(line_elements[line]):
+
                 with cols[i]:
-                    case_sensitives[line][element] = st.checkbox(
+
+                    unique_key = f"case_{line}_{element}_{i}"
+
+                    case_sensitives[line][f"{element}_{i}"] = st.checkbox(
                         element,
                         value=select_all_case,
-                        key=f"case_{line}_{element}"
+                        key=unique_key
                     )
 
 # ---------------- Sidebar: Proxy + UA Mode ----------------
@@ -80,6 +119,7 @@ proxy_input = st.sidebar.text_input(
     "Proxy (optional)",
     placeholder="http://user:pass@host:port OR http://host:port"
 )
+
 proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
 
 ua_choice = st.sidebar.radio(
@@ -90,48 +130,88 @@ ua_choice = st.sidebar.radio(
 
 # ---------------- User-Agent ----------------
 if ua_choice == "Live Browser UA":
-    LIVE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+
+    LIVE_UA = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/141.0.0.0 Safari/537.36"
+    )
+
 else:
-    LIVE_UA = "Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)"
+
+    LIVE_UA = (
+        "Mozilla/5.0 "
+        "(compatible; AdsBot-Google; "
+        "+http://www.google.com/adsbot.html)"
+    )
 
 st.sidebar.write(f"🟢 Using User-Agent: {LIVE_UA}")
 
 # ---------------- Global Session ----------------
 session = requests.Session()
+
 session.headers.update({
-    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,/;q=0.8',
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'accept-language': 'en-US,en;q=0.9',
     'user-agent': LIVE_UA
 })
+
 if proxies:
     session.proxies.update(proxies)
 
-# ---------------- Fetch with retry (Updated for SSL handling) ----------------
+# ---------------- Fetch with retry ----------------
 def fetch_with_retry(domain, max_retries=2, timeout=5):
-    urls = [f"https://{domain}/{file_type}", f"http://{domain}/{file_type}"]
+
+    urls = [
+        f"https://{domain}/{file_type}",
+        f"http://{domain}/{file_type}"
+    ]
+
     last_error = None
+
     for url in urls:
+
         for attempt in range(max_retries):
+
             try:
-                response = session.get(url, timeout=timeout, allow_redirects=True)
+
+                response = session.get(
+                    url,
+                    timeout=timeout,
+                    allow_redirects=True
+                )
+
                 if response.status_code == 200:
                     return response.text, None
+
                 else:
                     last_error = f"HTTP {response.status_code}"
+
             except requests.exceptions.SSLError:
+
                 try:
-                    response = session.get(url, timeout=timeout, allow_redirects=True, verify=False)
+
+                    response = session.get(
+                        url,
+                        timeout=timeout,
+                        allow_redirects=True,
+                        verify=False
+                    )
+
                     if response.status_code == 200:
                         return response.text, None
+
                     else:
                         last_error = f"HTTP {response.status_code}"
+
                 except Exception as e:
                     last_error = str(e)
+
             except Exception as e:
                 last_error = str(e)
+
     return None, last_error
 
-# ---------------- Check line content ----------------
 # ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
 
@@ -161,12 +241,18 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
 
             content_element = content_parts[i].strip()
 
-            # ---------------- WILDCARD SUPPORT ----------------
+            # ---------------- wildcard ----------------
             if search_element.strip().lower() == "<any>":
                 continue
 
-            # ---------------- NORMAL MATCH ----------------
-            if case_sensitives_line.get(search_element, False):
+            # ---------------- case sensitivity ----------------
+            is_case_sensitive = case_sensitives_line.get(
+                f"{search_element}_{i}",
+                False
+            )
+
+            # ---------------- exact match ----------------
+            if is_case_sensitive:
 
                 if search_element.strip() != content_element:
                     all_match = False
@@ -182,52 +268,96 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
             return True
 
     return False
+
 # ---------------- Main Checking ----------------
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
+
     start_time = time.time()
+
     results = {"Page": domains}
+
     for line in lines:
         results[line] = [""] * len(domains)
+
     errors = {}
 
     progress_bar = st.progress(0)
+
     status_text = st.empty()
 
     with ThreadPoolExecutor(max_workers=30) as executor:
-        future_to_index = {executor.submit(fetch_with_retry, domain): idx for idx, domain in enumerate(domains)}
+
+        future_to_index = {
+            executor.submit(fetch_with_retry, domain): idx
+            for idx, domain in enumerate(domains)
+        }
+
         for processed, future in enumerate(as_completed(future_to_index), 1):
+
             idx = future_to_index[future]
+
             domain = domains[idx]
 
             try:
                 content, err = future.result()
+
             except Exception as e:
                 content, err = None, str(e)
 
             if err:
+
                 errors[domain] = err
+
                 for line in lines:
                     results[line][idx] = "Error"
+
             else:
+
                 for line in lines:
-                    found = check_line_in_content(content, line_elements[line], case_sensitives[line])
+
+                    found = check_line_in_content(
+                        content,
+                        line_elements[line],
+                        case_sensitives[line]
+                    )
+
                     results[line][idx] = "Yes" if found else "No"
 
             progress_bar.progress(processed / len(domains))
-            status_text.text(f"Processed {processed}/{len(domains)} domains...")
+
+            status_text.text(
+                f"Processed {processed}/{len(domains)} domains..."
+            )
 
     end_time = time.time()
-    st.success(f"🎉 Checking complete! Time taken: {end_time - start_time:.2f} seconds")
+
+    st.success(
+        f"🎉 Checking complete! "
+        f"Time taken: {end_time - start_time:.2f} seconds"
+    )
 
     st.subheader("📊 Results")
+
     df = pd.DataFrame(results)
+
     st.dataframe(df, use_container_width=True, height=400)
 
     csv_data = df.to_csv(index=False).encode('utf-8')
-    st.download_button("💾 Download Results as CSV", data=csv_data, file_name="ads_txt_check_results.csv", mime="text/csv")
+
+    st.download_button(
+        "💾 Download Results as CSV",
+        data=csv_data,
+        file_name="ads_txt_check_results.csv",
+        mime="text/csv"
+    )
 
     if errors:
-        st.subheader("Errors")
-        error_df = pd.DataFrame({"Page": list(errors.keys()), "Error": list(errors.values())})
-        st.dataframe(error_df, use_container_width=True)
 
+        st.subheader("Errors")
+
+        error_df = pd.DataFrame({
+            "Page": list(errors.keys()),
+            "Error": list(errors.values())
+        })
+
+        st.dataframe(error_df, use_container_width=True)
