@@ -142,10 +142,6 @@ USER_AGENTS = [
 ]
 # ---------------- Global Session ----------------
 session = requests.Session()
-
-if proxies:
-    session.proxies.update(proxies)
-
 # ---------------- Fetch with retry ----------------
 def fetch_with_retry(domain, max_retries=2, timeout=5):
 
