@@ -9,7 +9,7 @@ import random
 
 # ---------------- Page Setup ----------------
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
-st.title("🔎 Ads.txt / App-ads.txt Bulk Checker")
+st.title("Ads.txt Validator")
 
 # ---------------- Input Tabs ----------------
 tab1, tab2 = st.tabs(["📋 Paste Domains", "📂 Upload Domains File"])
