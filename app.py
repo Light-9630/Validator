@@ -117,7 +117,7 @@ if lines:
                     )
 
 # ---------------- Sidebar: Proxy + UA Mode ----------------
-st.sidebar.header("⚡ Settings")
+#st.sidebar.header("⚡ Settings")
 # ---------------- User Agent Pool ----------------
 USER_AGENTS = [
     (
