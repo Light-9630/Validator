@@ -140,9 +140,6 @@ USER_AGENTS = [
         "Version/18.0 Safari/605.1.15"
     )
 ]
-
-st.sidebar.write("🟢 Rotating Browser User-Agents Enabled")
-
 # ---------------- Global Session ----------------
 session = requests.Session()
 
