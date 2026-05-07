@@ -118,14 +118,6 @@ if lines:
 
 # ---------------- Sidebar: Proxy + UA Mode ----------------
 st.sidebar.header("⚡ Settings")
-
-proxy_input = st.sidebar.text_input(
-    "Proxy (optional)",
-    placeholder="http://user:pass@host:port OR http://host:port"
-)
-
-proxies = {"http": proxy_input, "https": proxy_input} if proxy_input else None
-
 # ---------------- User Agent Pool ----------------
 USER_AGENTS = [
     (
