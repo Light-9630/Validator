@@ -183,8 +183,13 @@ USER_AGENTS = [
 # ---------------- Session ----------------
 session = requests.Session()
 
+
 # ---------------- Fetch Function ----------------
-def fetch_with_retry(domain, max_retries=2, timeout=5):
+def fetch_with_retry(domain, max_retries=2, timeout=10):
+    """
+    Fetch ads.txt using streaming to prevent truncation of large files.
+    Tries https/http and with/without www prefix.
+    """
 
     base_domains = [domain]
     if not domain.startswith("www."):
@@ -209,6 +214,8 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
                 headers = {
                     "User-Agent": random_ua,
+                    # identity = no compression, prevents partial decode truncation
+                    "Accept-Encoding": "identity",
                     "Accept": "*/*",
                     "Accept-Language": "en-US,en;q=0.9",
                     "Connection": "keep-alive",
@@ -216,17 +223,27 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                     "Pragma": "no-cache"
                 }
 
+                # stream=True: read the full response without a size cap
                 response = session.get(
                     url,
                     timeout=timeout,
                     allow_redirects=True,
-                    headers=headers
+                    headers=headers,
+                    stream=True
                 )
 
                 if response.status_code == 200:
 
                     try:
-                        content = response.text
+                        # Read full content via streaming to avoid truncation
+                        raw_bytes = b""
+                        for chunk in response.iter_content(chunk_size=8192):
+                            raw_bytes += chunk
+
+                        # Detect encoding
+                        encoding = response.encoding or "utf-8"
+                        content = raw_bytes.decode(encoding, errors="replace")
+
                     except Exception:
                         last_error = "Encoding Error"
                         continue
@@ -235,6 +252,7 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                         last_error = "Empty Response"
                         continue
 
+                    # Normalize whitespace variants
                     content = (
                         content
                         .replace("\u00a0", " ")
@@ -244,6 +262,7 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
                     lower_content = content.lower()
 
+                    # Reject HTML/WAF pages
                     if (
                         "<html" in lower_content or
                         "<!doctype html" in lower_content or
@@ -287,6 +306,7 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
 # ---------------- Strip Comment ----------------
 def strip_comment(raw_line):
+    """Strip inline # comments — handles with or without space before #"""
     return raw_line.split("#")[0].strip()
 
 
@@ -401,7 +421,8 @@ if st.button("🔍 Run Debug") and debug_domain and debug_line:
         st.error(f"Fetch failed: {err}")
 
     else:
-        st.success(f"✅ Fetched — {len(content.splitlines())} total lines")
+        total_lines = len(content.splitlines())
+        st.success(f"✅ Fetched — {total_lines} total lines, {len(content)} chars")
 
         # Show raw lines containing the first field keyword
         keyword = debug_line.split(",")[0].strip().lower()
@@ -412,7 +433,11 @@ if st.button("🔍 Run Debug") and debug_domain and debug_line:
             for l in matching_raw:
                 st.code(repr(l), language="text")
         else:
-            st.warning(f"❌ No lines containing '{keyword}' found in the fetched content at all.")
+            st.warning(
+                f"❌ No lines containing '{keyword}' found in the fetched content.\n\n"
+                f"The file only has {total_lines} lines — the real file may have more. "
+                f"This usually means the server returned a truncated or cached version."
+            )
 
         # Parse and show search elements
         if "," in debug_line:
@@ -438,7 +463,16 @@ if st.button("🔍 Run Debug") and debug_domain and debug_line:
             for info in debug_info:
                 st.code(info, language="text")
         else:
-            st.warning("No near-misses found either — the keyword may not exist in the file.")
+            st.warning("No near-misses either — the keyword does not exist in the fetched content.")
+
+        # Show first 20 and last 20 lines to spot truncation
+        all_lines = content.splitlines()
+        with st.expander("📄 First 20 lines of fetched content"):
+            for l in all_lines[:20]:
+                st.text(repr(l))
+        with st.expander("📄 Last 20 lines of fetched content"):
+            for l in all_lines[-20:]:
+                st.text(repr(l))
 
 
 # ---------------- Main Checking ----------------
