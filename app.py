@@ -18,13 +18,23 @@ domains = []
 
 with tab1:
     st.header("Input Domains")
-    domain_input = st.text_area("Paste domains (one per line)", height=200)
+
+    domain_input = st.text_area(
+        "Paste domains (one per line)",
+        height=200
+    )
+
     st.caption("Use 100 Domains per search for accurate and faster result")
 
     if domain_input:
-        domains = [d.strip() for d in domain_input.splitlines() if d.strip()]
+        domains = [
+            d.strip()
+            for d in domain_input.splitlines()
+            if d.strip()
+        ]
 
 with tab2:
+
     st.header("Upload File")
 
     uploaded_file = st.file_uploader(
@@ -33,7 +43,10 @@ with tab2:
     )
 
     if uploaded_file:
-        stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+
+        stringio = StringIO(
+            uploaded_file.getvalue().decode("utf-8")
+        )
 
         uploaded_domains = [
             line.strip()
@@ -43,7 +56,7 @@ with tab2:
 
         domains.extend(uploaded_domains)
 
-# Deduplicate but preserve order
+# ---------------- Deduplicate ----------------
 domains = list(dict.fromkeys(domains))
 
 if domains:
@@ -54,20 +67,27 @@ st.header("🔍 Search Lines")
 
 line_input = st.text_area(
     "Paste search lines (CSV format or single word/number, one per line)",
-    height=200
+    height=200,
+    placeholder="""pubmatic.com
+xapads.com,223557,RESELLER
+google.com,<any>,DIRECT,<any>"""
 )
 
-st.caption(
-    "Use <any> as wildcard for any field.\n"
-    "Example: google.com,<any>,DIRECT,<any>")
+st.info(
+    "💡 Wildcard Support:\n\n"
+    "`<any>` matches any value in that field.\n\n"
+    "Examples:\n"
+    "`google.com,<any>,DIRECT,<any>`\n"
+    "`pubmatic.com,<any>,RESELLER`"
+)
 
-# ---------------- File type selection ----------------
+# ---------------- File Type ----------------
 file_type = st.selectbox(
     "Select file type",
     ["ads.txt", "app-ads.txt"]
 )
 
-# ---------------- Field Limit Selection ----------------
+# ---------------- Field Limit ----------------
 field_limit = st.selectbox(
     "Select number of fields to check",
     [1, 2, 3, 4],
@@ -75,7 +95,11 @@ field_limit = st.selectbox(
 )
 
 # ---------------- Process Lines ----------------
-lines = [l.strip() for l in line_input.splitlines() if l.strip()]
+lines = [
+    l.strip()
+    for l in line_input.splitlines()
+    if l.strip()
+]
 
 case_sensitives = {}
 line_elements = {}
@@ -92,10 +116,14 @@ if lines:
         for line in lines:
 
             if "," in line:
-                elements = [e.strip() for e in line.split(",")]
+                elements = [
+                    e.strip()
+                    for e in line.split(",")
+                ]
             else:
                 elements = [line]
 
+            # IMPORTANT
             line_elements[line] = elements[:field_limit]
 
             case_sensitives[line] = {}
@@ -116,33 +144,37 @@ if lines:
                         key=unique_key
                     )
 
-# ---------------- Sidebar: Proxy + UA Mode ----------------
-#st.sidebar.header("⚡ Settings")
 # ---------------- User Agent Pool ----------------
 USER_AGENTS = [
+
     (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/141.0.0.0 Safari/537.36"
     ),
+
     (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/140.0.0.0 Safari/537.36"
     ),
+
     (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) "
         "Gecko/20100101 Firefox/140.0"
     ),
+
     (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/605.1.15 (KHTML, like Gecko) "
         "Version/18.0 Safari/605.1.15"
     )
 ]
-# ---------------- Global Session ----------------
+
+# ---------------- Session ----------------
 session = requests.Session()
-# ---------------- Fetch with retry ----------------
+
+# ---------------- Fetch Function ----------------
 def fetch_with_retry(domain, max_retries=2, timeout=5):
 
     urls = [
@@ -158,7 +190,7 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
             try:
 
-                # random delay
+                # small randomized delay
                 time.sleep(random.uniform(0.05, 0.2))
 
                 # rotate UA
@@ -216,29 +248,38 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                 last_error = str(e)
 
     return None, last_error
-# ---------------- Check line content ----------------
+
+# ---------------- Matching Function ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
 
     if not content:
         return False
 
-    content_lines = content.splitlines()
+    cleaned_lines = []
 
-    cleaned_lines = [
-        re.split(r'\s*#', line.strip())[0].strip()
-        for line in content_lines
-        if line.strip() and not line.strip().startswith('#')
-    ]
+    for line in content.splitlines():
 
+        line = re.split(r'\s*#', line.strip())[0].strip()
+
+        if line:
+            cleaned_lines.append(line)
+
+    # ---------------- LOOP ADS.TXT LINES ----------------
     for c_line in cleaned_lines:
 
-        content_parts = [e.strip() for e in c_line.split(',')]
+        content_parts = [
+            p.strip()
+            for p in c_line.split(",")
+        ]
 
-        # ---------------- SIMPLE SEARCH ----------------
+        # ==================================================
+        # SIMPLE SEARCH MODE
+        # ==================================================
         if len(line_elements) == 1:
 
             search_element = line_elements[0].strip()
 
+            # wildcard only
             if search_element.lower() == "<any>":
                 return True
 
@@ -257,22 +298,25 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
                 if search_element.lower() in c_line.lower():
                     return True
 
-        # ---------------- FIELD MATCH ----------------
+        # ==================================================
+        # FIELD MATCH MODE
+        # ==================================================
         else:
 
-            all_match = True
+            # fewer fields than required
+            if len(content_parts) < len(line_elements):
+                continue
+
+            matched = True
 
             for i, search_element in enumerate(line_elements):
 
-                # missing field
-                if i >= len(content_parts):
-                    all_match = False
-                    break
+                search_element = search_element.strip()
 
                 content_element = content_parts[i].strip()
 
                 # wildcard
-                if search_element.strip().lower() == "<any>":
+                if search_element.lower() == "<any>":
                     continue
 
                 is_case_sensitive = case_sensitives_line.get(
@@ -280,22 +324,25 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
                     False
                 )
 
+                # case sensitive
                 if is_case_sensitive:
 
-                    if search_element.strip() != content_element:
-                        all_match = False
+                    if search_element != content_element:
+                        matched = False
                         break
 
+                # case insensitive
                 else:
 
-                    if search_element.strip().lower() != content_element.lower():
-                        all_match = False
+                    if search_element.lower() != content_element.lower():
+                        matched = False
                         break
 
-            if all_match:
+            if matched:
                 return True
 
     return False
+
 # ---------------- Main Checking ----------------
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
 
@@ -312,7 +359,7 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
 
     status_text = st.empty()
 
-    # reduced thread count to reduce 403s
+    # optimized thread count
     with ThreadPoolExecutor(max_workers=15) as executor:
 
         future_to_index = {
@@ -320,16 +367,21 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
             for idx, domain in enumerate(domains)
         }
 
-        for processed, future in enumerate(as_completed(future_to_index), 1):
+        for processed, future in enumerate(
+            as_completed(future_to_index),
+            1
+        ):
 
             idx = future_to_index[future]
 
             domain = domains[idx]
 
             try:
+
                 content, err = future.result()
 
             except Exception as e:
+
                 content, err = None, str(e)
 
             if err:
@@ -349,9 +401,13 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
                         case_sensitives[line]
                     )
 
-                    results[line][idx] = "Yes" if found else "No"
+                    results[line][idx] = (
+                        "Yes" if found else "No"
+                    )
 
-            progress_bar.progress(processed / len(domains))
+            progress_bar.progress(
+                processed / len(domains)
+            )
 
             status_text.text(
                 f"Processed {processed}/{len(domains)} domains..."
@@ -364,13 +420,18 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         f"Time taken: {end_time - start_time:.2f} seconds"
     )
 
+    # ---------------- Results ----------------
     st.subheader("📊 Results")
 
     df = pd.DataFrame(results)
 
-    st.dataframe(df, use_container_width=True, height=400)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        height=400
+    )
 
-    csv_data = df.to_csv(index=False).encode('utf-8')
+    csv_data = df.to_csv(index=False).encode("utf-8")
 
     st.download_button(
         "💾 Download Results as CSV",
@@ -379,6 +440,7 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         mime="text/csv"
     )
 
+    # ---------------- Errors ----------------
     if errors:
 
         st.subheader("Errors")
@@ -388,4 +450,7 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
             "Error": list(errors.values())
         })
 
-        st.dataframe(error_df, use_container_width=True)
+        st.dataframe(
+            error_df,
+            use_container_width=True
+        )
