@@ -125,16 +125,23 @@ if lines:
             else:
                 elements = [line]
 
-            # apply field limit
-            line_elements[line] = elements[:field_limit]
+            # -------------------------------------------------------
+            # FIX 1: Do NOT truncate line_elements to field_limit here.
+            # Store ALL parsed elements and apply field_limit only
+            # during matching. This prevents a 3-field search from
+            # being silently sliced to 2 fields when field_limit=2.
+            # The UI checkboxes still respect field_limit for display.
+            # -------------------------------------------------------
+            display_elements = elements[:field_limit]
+            line_elements[line] = elements  # store full elements
 
             case_sensitives[line] = {}
 
             st.markdown(f"**Line: {line}**")
 
-            cols = st.columns(len(line_elements[line]))
+            cols = st.columns(len(display_elements))
 
-            for i, element in enumerate(line_elements[line]):
+            for i, element in enumerate(display_elements):
 
                 with cols[i]:
 
@@ -275,20 +282,46 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
     return None, last_error
 
+
+# ---------------- Strip Comment from a Line ----------------
+def strip_comment(raw_line):
+    """
+    FIX 2: Robustly strip inline comments from an ads.txt line.
+
+    Handles all these cases:
+        lijit.com, 555563, RESELLER, fafdf38b16bf6b2b #SOVRN
+        lijit.com, 555563, RESELLER, fafdf38b16bf6b2b#SOVRN
+        lijit.com, 555563, RESELLER, fafdf38b16bf6b2b  # SOVRN comment
+        # full-line comment  (returns empty string)
+
+    Strategy:
+    - Split on the FIRST '#' character
+    - Take everything to the left
+    - Strip surrounding whitespace
+    """
+    # Split on first '#' only, take the left part
+    without_comment = raw_line.split("#")[0].strip()
+    return without_comment
+
+
 # ---------------- Matching Function ----------------
-def check_line_in_content(content, line_elements, case_sensitives_line):
+def check_line_in_content(content, all_line_elements, case_sensitives_line, field_limit):
 
     if not content:
         return False
 
+    # Apply field_limit here at match time (FIX 1)
+    line_elements = all_line_elements[:field_limit]
+
     cleaned_lines = []
 
-    for line in content.splitlines():
+    for raw_line in content.splitlines():
 
-        line = re.split(r'\s*#', line.strip())[0].strip()
+        # FIX 2: use robust comment stripper
+        stripped = strip_comment(raw_line.strip())
 
-        if line:
-            cleaned_lines.append(line)
+        if stripped:
+            cleaned_lines.append(stripped)
 
     for c_line in cleaned_lines:
 
@@ -301,7 +334,7 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         ]
 
         # ==================================================
-        # SIMPLE SEARCH MODE
+        # SIMPLE SEARCH MODE (field_limit == 1)
         # ==================================================
         if len(line_elements) == 1:
 
@@ -330,10 +363,11 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
                     return True
 
         # ==================================================
-        # FIELD MATCH MODE
+        # FIELD MATCH MODE (field_limit >= 2)
         # ==================================================
         else:
 
+            # Content must have at least as many fields as we're searching
             if len(content_parts) < len(line_elements):
                 continue
 
@@ -353,7 +387,7 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
                     content_parts[i].strip()
                 )
 
-                # wildcard support
+                # wildcard — skip this field
                 if search_element.lower() == "<any>":
                     continue
 
@@ -378,6 +412,7 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
                 return True
 
     return False
+
 
 # ---------------- Main Checking ----------------
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
@@ -432,8 +467,9 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
 
                     found = check_line_in_content(
                         content,
-                        line_elements[line],
-                        case_sensitives[line]
+                        line_elements[line],      # full elements list
+                        case_sensitives[line],
+                        field_limit               # applied inside the function
                     )
 
                     results[line][idx] = (
