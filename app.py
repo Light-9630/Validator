@@ -216,7 +216,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                 last_error = str(e)
 
     return None, last_error
-
 # ---------------- Check line content ----------------
 def check_line_in_content(content, line_elements, case_sensitives_line):
 
@@ -231,69 +230,70 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         if line.strip() and not line.strip().startswith('#')
     ]
 
-    # ---------------- SIMPLE SEARCH MODE ----------------
-    if len(line_elements) == 1 and line_elements[0].strip().lower() != "<any>":
-
-        search_term = line_elements[0].strip()
-
-        for c_line in cleaned_lines:
-
-            is_case_sensitive = case_sensitives_line.get(
-                f"{search_term}_0",
-                False
-            )
-
-            if is_case_sensitive:
-
-                if search_term in c_line:
-                    return True
-
-            else:
-
-                if search_term.lower() in c_line.lower():
-                    return True
-
-        return False
-
-    # ---------------- FIELD MATCH MODE ----------------
     for c_line in cleaned_lines:
 
         content_parts = [e.strip() for e in c_line.split(',')]
 
-        all_match = True
+        # ---------------- SIMPLE SEARCH ----------------
+        if len(line_elements) == 1:
 
-        for i, search_element in enumerate(line_elements):
+            search_element = line_elements[0].strip()
 
-            # field missing
-            if i >= len(content_parts):
-                all_match = False
-                break
-
-            content_element = content_parts[i].strip()
-
-            # wildcard support
-            if search_element.strip().lower() == "<any>":
-                continue
+            if search_element.lower() == "<any>":
+                return True
 
             is_case_sensitive = case_sensitives_line.get(
-                f"{search_element}_{i}",
+                f"{search_element}_0",
                 False
             )
 
             if is_case_sensitive:
 
-                if search_element.strip() != content_element:
-                    all_match = False
-                    break
+                if search_element in c_line:
+                    return True
 
             else:
 
-                if search_element.strip().lower() != content_element.lower():
+                if search_element.lower() in c_line.lower():
+                    return True
+
+        # ---------------- FIELD MATCH ----------------
+        else:
+
+            all_match = True
+
+            for i, search_element in enumerate(line_elements):
+
+                # missing field
+                if i >= len(content_parts):
                     all_match = False
                     break
 
-        if all_match:
-            return True
+                content_element = content_parts[i].strip()
+
+                # wildcard
+                if search_element.strip().lower() == "<any>":
+                    continue
+
+                is_case_sensitive = case_sensitives_line.get(
+                    f"{search_element}_{i}",
+                    False
+                )
+
+                if is_case_sensitive:
+
+                    if search_element.strip() != content_element:
+                        all_match = False
+                        break
+
+                else:
+
+                    if search_element.strip().lower() != content_element.lower():
+                        all_match = False
+                        break
+
+            if all_match:
+                return True
 
     return False
 # ---------------- Main Checking ----------------
