@@ -217,12 +217,67 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                     headers=headers
                 )
 
+                # ---------------- SUCCESS ----------------
                 if response.status_code == 200:
-                    return response.text, None
+
+                    try:
+                        content = response.text
+                    except Exception:
+                        last_error = "Encoding Error"
+                        continue
+
+                    # ---------------- EMPTY RESPONSE ----------------
+                    if not content.strip():
+                        last_error = "Empty Response"
+                        continue
+
+                    lower_content = content.lower()
+
+                    # ---------------- HTML DETECTION ----------------
+                    html_indicators = [
+                        "<html",
+                        "<!doctype",
+                        "<head>",
+                        "<body>",
+                        "cloudflare",
+                        "cf-browser-verification",
+                        "access denied",
+                        "captcha",
+                        "akamai",
+                        "imperva",
+                        "datadome"
+                    ]
+
+                    if any(indicator in lower_content for indicator in html_indicators):
+                        last_error = "HTML/WAF Response"
+                        continue
+
+                    # ---------------- NORMALIZE WEIRD SPACES ----------------
+                    content = (
+                        content
+                        .replace("\u00a0", " ")
+                        .replace("\t", " ")
+                    )
+
+                    return content, None
+
+                # ---------------- COMMON STATUS ERRORS ----------------
+                elif response.status_code == 403:
+                    last_error = "403 Forbidden"
+
+                elif response.status_code == 404:
+                    last_error = "404 Not Found"
+
+                elif response.status_code == 429:
+                    last_error = "429 Rate Limited"
+
+                elif response.status_code >= 500:
+                    last_error = f"{response.status_code} Server Error"
 
                 else:
                     last_error = f"HTTP {response.status_code}"
 
+            # ---------------- SSL ----------------
             except requests.exceptions.SSLError:
 
                 try:
@@ -236,7 +291,40 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                     )
 
                     if response.status_code == 200:
-                        return response.text, None
+
+                        content = response.text
+
+                        if not content.strip():
+                            last_error = "Empty Response"
+                            continue
+
+                        lower_content = content.lower()
+
+                        html_indicators = [
+                            "<html",
+                            "<!doctype",
+                            "<head>",
+                            "<body>",
+                            "cloudflare",
+                            "cf-browser-verification",
+                            "access denied",
+                            "captcha",
+                            "akamai",
+                            "imperva",
+                            "datadome"
+                        ]
+
+                        if any(indicator in lower_content for indicator in html_indicators):
+                            last_error = "HTML/WAF Response"
+                            continue
+
+                        content = (
+                            content
+                            .replace("\u00a0", " ")
+                            .replace("\t", " ")
+                        )
+
+                        return content, None
 
                     else:
                         last_error = f"HTTP {response.status_code}"
@@ -244,106 +332,24 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                 except Exception as e:
                     last_error = str(e)
 
+            # ---------------- TIMEOUT ----------------
+            except requests.exceptions.Timeout:
+                last_error = "Timeout"
+
+            # ---------------- CONNECTION ----------------
+            except requests.exceptions.ConnectionError:
+                last_error = "Connection Failed"
+
+            # ---------------- TOO MANY REDIRECTS ----------------
+            except requests.exceptions.TooManyRedirects:
+                last_error = "Redirect Loop"
+
+            # ---------------- OTHER ----------------
             except Exception as e:
                 last_error = str(e)
 
     return None, last_error
-
-# ---------------- Matching Function ----------------
-def check_line_in_content(content, line_elements, case_sensitives_line):
-
-    if not content:
-        return False
-
-    cleaned_lines = []
-
-    for line in content.splitlines():
-
-        line = re.split(r'\s*#', line.strip())[0].strip()
-
-        if line:
-            cleaned_lines.append(line)
-
-    # ---------------- LOOP ADS.TXT LINES ----------------
-    for c_line in cleaned_lines:
-
-        content_parts = [
-            p.strip()
-            for p in c_line.split(",")
-        ]
-
-        # ==================================================
-        # SIMPLE SEARCH MODE
-        # ==================================================
-        if len(line_elements) == 1:
-
-            search_element = line_elements[0].strip()
-
-            # wildcard only
-            if search_element.lower() == "<any>":
-                return True
-
-            is_case_sensitive = case_sensitives_line.get(
-                f"{search_element}_0",
-                False
-            )
-
-            if is_case_sensitive:
-
-                if search_element in c_line:
-                    return True
-
-            else:
-
-                if search_element.lower() in c_line.lower():
-                    return True
-
-        # ==================================================
-        # FIELD MATCH MODE
-        # ==================================================
-        else:
-
-            # fewer fields than required
-            if len(content_parts) < len(line_elements):
-                continue
-
-            matched = True
-
-            for i, search_element in enumerate(line_elements):
-
-                search_element = search_element.strip()
-
-                content_element = content_parts[i].strip()
-
-                # wildcard
-                if search_element.lower() == "<any>":
-                    continue
-
-                is_case_sensitive = case_sensitives_line.get(
-                    f"{search_element}_{i}",
-                    False
-                )
-
-                # case sensitive
-                if is_case_sensitive:
-
-                    if search_element != content_element:
-                        matched = False
-                        break
-
-                # case insensitive
-                else:
-
-                    if search_element.lower() != content_element.lower():
-                        matched = False
-                        break
-
-            if matched:
-                return True
-
-    return False
-
-# ---------------- Main Checking ----------------
+    # ---------------- Main Checking ----------------
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
 
     start_time = time.time()
