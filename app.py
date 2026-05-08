@@ -231,6 +231,31 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         if line.strip() and not line.strip().startswith('#')
     ]
 
+    # ---------------- SIMPLE SEARCH MODE ----------------
+    if len(line_elements) == 1 and line_elements[0].strip().lower() != "<any>":
+
+        search_term = line_elements[0].strip()
+
+        for c_line in cleaned_lines:
+
+            is_case_sensitive = case_sensitives_line.get(
+                f"{search_term}_0",
+                False
+            )
+
+            if is_case_sensitive:
+
+                if search_term in c_line:
+                    return True
+
+            else:
+
+                if search_term.lower() in c_line.lower():
+                    return True
+
+        return False
+
+    # ---------------- FIELD MATCH MODE ----------------
     for c_line in cleaned_lines:
 
         content_parts = [e.strip() for e in c_line.split(',')]
@@ -246,17 +271,15 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
 
             content_element = content_parts[i].strip()
 
-            # ---------------- wildcard ----------------
+            # wildcard support
             if search_element.strip().lower() == "<any>":
                 continue
 
-            # ---------------- case sensitivity ----------------
             is_case_sensitive = case_sensitives_line.get(
                 f"{search_element}_{i}",
                 False
             )
 
-            # ---------------- exact match ----------------
             if is_case_sensitive:
 
                 if search_element.strip() != content_element:
@@ -273,7 +296,6 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
             return True
 
     return False
-
 # ---------------- Main Checking ----------------
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
 
