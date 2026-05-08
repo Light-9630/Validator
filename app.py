@@ -118,40 +118,40 @@ if lines:
         for line in lines:
 
             if "," in line:
-                elements = [
-                    e.strip()
-                    for e in line.split(",")
-                ]
+                elements = [e.strip() for e in line.split(",")]
             else:
                 elements = [line]
 
-            # -------------------------------------------------------
-            # FIX 1: Do NOT truncate line_elements to field_limit here.
-            # Store ALL parsed elements and apply field_limit only
-            # during matching. This prevents a 3-field search from
-            # being silently sliced to 2 fields when field_limit=2.
-            # The UI checkboxes still respect field_limit for display.
-            # -------------------------------------------------------
-            display_elements = elements[:field_limit]
-            line_elements[line] = elements  # store full elements
+            # Store ALL elements — field_limit applied at match time only
+            line_elements[line] = elements
 
             case_sensitives[line] = {}
 
-            st.markdown(f"**Line: {line}**")
+            st.markdown(f"**Line: `{line}`**")
 
+            display_elements = elements[:field_limit]
             cols = st.columns(len(display_elements))
 
             for i, element in enumerate(display_elements):
-
                 with cols[i]:
-
                     unique_key = f"case_{line}_{element}_{i}"
-
                     case_sensitives[line][f"{element}_{i}"] = st.checkbox(
                         element,
                         value=select_all_case,
                         key=unique_key
                     )
+
+        # ---- Live debug preview of parsed elements ----
+        st.markdown("---")
+        st.markdown("**🔬 Parsed Search Elements (live)**")
+        for line, elems in line_elements.items():
+            sliced = elems[:field_limit]
+            st.code(
+                f"Line     : {repr(line)}\n"
+                f"All elems: {elems}\n"
+                f"After field_limit={field_limit}: {sliced}",
+                language="text"
+            )
 
 # ---------------- User Agent Pool ----------------
 USER_AGENTS = [
@@ -186,10 +186,14 @@ session = requests.Session()
 # ---------------- Fetch Function ----------------
 def fetch_with_retry(domain, max_retries=2, timeout=5):
 
-    urls = [
-        f"https://{domain}/{file_type}",
-        f"http://{domain}/{file_type}"
-    ]
+    base_domains = [domain]
+    if not domain.startswith("www."):
+        base_domains.append(f"www.{domain}")
+
+    urls = []
+    for d in base_domains:
+        urls.append(f"https://{d}/{file_type}")
+        urls.append(f"http://{d}/{file_type}")
 
     last_error = None
 
@@ -231,7 +235,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                         last_error = "Empty Response"
                         continue
 
-                    # normalize weird spaces
                     content = (
                         content
                         .replace("\u00a0", " ")
@@ -241,7 +244,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
                     lower_content = content.lower()
 
-                    # detect REAL html pages only
                     if (
                         "<html" in lower_content or
                         "<!doctype html" in lower_content or
@@ -254,7 +256,7 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                     return content, None
 
                 elif response.status_code == 403:
-                    last_error = "403 Forbidden"
+                    last_error = "403 Blocked (WAF)"
 
                 elif response.status_code == 404:
                     last_error = "404 Not Found"
@@ -283,138 +285,164 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
     return None, last_error
 
 
-# ---------------- Strip Comment from a Line ----------------
+# ---------------- Strip Comment ----------------
 def strip_comment(raw_line):
-    """
-    FIX 2: Robustly strip inline comments from an ads.txt line.
-
-    Handles all these cases:
-        lijit.com, 555563, RESELLER, fafdf38b16bf6b2b #SOVRN
-        lijit.com, 555563, RESELLER, fafdf38b16bf6b2b#SOVRN
-        lijit.com, 555563, RESELLER, fafdf38b16bf6b2b  # SOVRN comment
-        # full-line comment  (returns empty string)
-
-    Strategy:
-    - Split on the FIRST '#' character
-    - Take everything to the left
-    - Strip surrounding whitespace
-    """
-    # Split on first '#' only, take the left part
-    without_comment = raw_line.split("#")[0].strip()
-    return without_comment
+    return raw_line.split("#")[0].strip()
 
 
 # ---------------- Matching Function ----------------
 def check_line_in_content(content, all_line_elements, case_sensitives_line, field_limit):
 
     if not content:
-        return False
+        return False, []
 
-    # Apply field_limit here at match time (FIX 1)
+    # Apply field_limit HERE — not at UI parse time
     line_elements = all_line_elements[:field_limit]
+
+    debug_info = []
 
     cleaned_lines = []
 
     for raw_line in content.splitlines():
-
-        # FIX 2: use robust comment stripper
         stripped = strip_comment(raw_line.strip())
-
         if stripped:
             cleaned_lines.append(stripped)
 
     for c_line in cleaned_lines:
 
-        # normalize spaces
         c_line = re.sub(r'\s+', ' ', c_line.strip())
-
-        content_parts = [
-            p.strip()
-            for p in c_line.split(",")
-        ]
+        content_parts = [p.strip() for p in c_line.split(",")]
 
         # ==================================================
-        # SIMPLE SEARCH MODE (field_limit == 1)
+        # SIMPLE SEARCH MODE
         # ==================================================
         if len(line_elements) == 1:
 
-            search_element = re.sub(
-                r'\s+',
-                ' ',
-                line_elements[0].strip()
-            )
+            search_element = re.sub(r'\s+', ' ', line_elements[0].strip())
 
             if search_element.lower() == "<any>":
-                return True
+                return True, debug_info
 
-            is_case_sensitive = case_sensitives_line.get(
-                f"{search_element}_0",
-                False
-            )
+            is_case_sensitive = case_sensitives_line.get(f"{search_element}_0", False)
 
             if is_case_sensitive:
-
                 if search_element in c_line:
-                    return True
-
+                    return True, debug_info
             else:
-
                 if search_element.lower() in c_line.lower():
-                    return True
+                    return True, debug_info
 
         # ==================================================
-        # FIELD MATCH MODE (field_limit >= 2)
+        # FIELD MATCH MODE
         # ==================================================
         else:
 
-            # Content must have at least as many fields as we're searching
             if len(content_parts) < len(line_elements):
                 continue
 
             matched = True
+            field_debug = []
 
             for i, search_element in enumerate(line_elements):
 
-                search_element = re.sub(
-                    r'\s+',
-                    ' ',
-                    search_element.strip()
-                )
+                se = re.sub(r'\s+', ' ', search_element.strip())
+                ce = re.sub(r'\s+', ' ', content_parts[i].strip())
 
-                content_element = re.sub(
-                    r'\s+',
-                    ' ',
-                    content_parts[i].strip()
-                )
-
-                # wildcard — skip this field
-                if search_element.lower() == "<any>":
+                if se.lower() == "<any>":
+                    field_debug.append(f"Field {i}: {repr(se)} == <any> ✅")
                     continue
 
-                is_case_sensitive = case_sensitives_line.get(
-                    f"{search_element}_{i}",
-                    False
-                )
+                is_case_sensitive = case_sensitives_line.get(f"{search_element}_{i}", False)
 
                 if is_case_sensitive:
-
-                    if search_element != content_element:
-                        matched = False
-                        break
-
+                    eq = (se == ce)
                 else:
+                    eq = (se.lower() == ce.lower())
 
-                    if search_element.lower() != content_element.lower():
-                        matched = False
-                        break
+                field_debug.append(
+                    f"Field {i}: search={repr(se)} | content={repr(ce)} | {'✅' if eq else '❌'}"
+                )
+
+                if not eq:
+                    matched = False
+                    break
 
             if matched:
-                return True
+                debug_info.append(f"MATCH on: {c_line}\n  " + "\n  ".join(field_debug))
+                return True, debug_info
+            else:
+                # Log near-misses where first field matched
+                if field_debug and "✅" in field_debug[0]:
+                    debug_info.append(f"Near-miss: {c_line}\n  " + "\n  ".join(field_debug))
 
-    return False
+    return False, debug_info
+
+
+# ---------------- Single Domain Debug Tool ----------------
+st.markdown("---")
+st.header("🔬 Debug Single Domain")
+st.caption("Paste one domain and one search line to see exactly what is happening")
+
+debug_domain = st.text_input(
+    "Domain to debug",
+    placeholder="euronews.com"
+)
+debug_line = st.text_input(
+    "Search line to debug",
+    placeholder="nativo.com, 6047, RESELLER"
+)
+
+if st.button("🔍 Run Debug") and debug_domain and debug_line:
+
+    with st.spinner("Fetching..."):
+        content, err = fetch_with_retry(debug_domain.strip())
+
+    if err:
+        st.error(f"Fetch failed: {err}")
+
+    else:
+        st.success(f"✅ Fetched — {len(content.splitlines())} total lines")
+
+        # Show raw lines containing the first field keyword
+        keyword = debug_line.split(",")[0].strip().lower()
+        matching_raw = [l for l in content.splitlines() if keyword in l.lower()]
+
+        st.markdown(f"**Raw lines in file containing `{keyword}`:**")
+        if matching_raw:
+            for l in matching_raw:
+                st.code(repr(l), language="text")
+        else:
+            st.warning(f"❌ No lines containing '{keyword}' found in the fetched content at all.")
+
+        # Parse and show search elements
+        if "," in debug_line:
+            d_elements = [e.strip() for e in debug_line.split(",")]
+        else:
+            d_elements = [debug_line.strip()]
+
+        st.markdown(f"**Parsed search elements:** `{d_elements}`")
+        st.markdown(f"**field_limit:** `{field_limit}`")
+        st.markdown(f"**Elements used for matching:** `{d_elements[:field_limit]}`")
+
+        # Run match with debug
+        dummy_case = {f"{e}_{i}": False for i, e in enumerate(d_elements)}
+        found, debug_info = check_line_in_content(content, d_elements, dummy_case, field_limit)
+
+        if found:
+            st.success("✅ Result: YES — Match found")
+        else:
+            st.error("❌ Result: NO — No match")
+
+        if debug_info:
+            st.markdown("**Debug trace (matches + near-misses):**")
+            for info in debug_info:
+                st.code(info, language="text")
+        else:
+            st.warning("No near-misses found either — the keyword may not exist in the file.")
 
 
 # ---------------- Main Checking ----------------
+st.markdown("---")
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
 
     start_time = time.time()
@@ -427,8 +455,7 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     errors = {}
 
     progress_bar = st.progress(0)
-
-    status_text = st.empty()
+    status_text  = st.empty()
 
     with ThreadPoolExecutor(max_workers=15) as executor:
 
@@ -437,70 +464,44 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
             for idx, domain in enumerate(domains)
         }
 
-        for processed, future in enumerate(
-            as_completed(future_to_index),
-            1
-        ):
+        for processed, future in enumerate(as_completed(future_to_index), 1):
 
-            idx = future_to_index[future]
-
+            idx    = future_to_index[future]
             domain = domains[idx]
 
             try:
-
                 content, err = future.result()
-
             except Exception as e:
-
                 content, err = None, str(e)
 
             if err:
-
                 errors[domain] = err
-
                 for line in lines:
                     results[line][idx] = "Error"
 
             else:
-
                 for line in lines:
-
-                    found = check_line_in_content(
+                    found, _ = check_line_in_content(
                         content,
-                        line_elements[line],      # full elements list
+                        line_elements[line],
                         case_sensitives[line],
-                        field_limit               # applied inside the function
+                        field_limit
                     )
+                    results[line][idx] = "Yes" if found else "No"
 
-                    results[line][idx] = (
-                        "Yes" if found else "No"
-                    )
-
-            progress_bar.progress(
-                processed / len(domains)
-            )
-
-            status_text.text(
-                f"Processed {processed}/{len(domains)} domains..."
-            )
+            progress_bar.progress(processed / len(domains))
+            status_text.text(f"Processed {processed}/{len(domains)} domains...")
 
     end_time = time.time()
 
-    st.success(
-        f"🎉 Checking complete! "
-        f"Time taken: {end_time - start_time:.2f} seconds"
-    )
+    st.success(f"🎉 Done! Time taken: {end_time - start_time:.2f} seconds")
 
     # ---------------- Results ----------------
     st.subheader("📊 Results")
 
     df = pd.DataFrame(results)
 
-    st.dataframe(
-        df,
-        use_container_width=True,
-        height=400
-    )
+    st.dataframe(df, use_container_width=True, height=400)
 
     csv_data = df.to_csv(index=False).encode("utf-8")
 
@@ -514,14 +515,11 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     # ---------------- Errors ----------------
     if errors:
 
-        st.subheader("Errors")
+        st.subheader("⚠️ Errors")
 
         error_df = pd.DataFrame({
-            "Page": list(errors.keys()),
+            "Page":  list(errors.keys()),
             "Error": list(errors.values())
         })
 
-        st.dataframe(
-            error_df,
-            use_container_width=True
-        )
+        st.dataframe(error_df, use_container_width=True)
