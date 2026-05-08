@@ -17,6 +17,7 @@ tab1, tab2 = st.tabs(["📋 Paste Domains", "📂 Upload Domains File"])
 domains = []
 
 with tab1:
+
     st.header("Input Domains")
 
     domain_input = st.text_area(
@@ -27,6 +28,7 @@ with tab1:
     st.caption("Use 100 Domains per search for accurate and faster result")
 
     if domain_input:
+
         domains = [
             d.strip()
             for d in domain_input.splitlines()
@@ -123,7 +125,7 @@ if lines:
             else:
                 elements = [line]
 
-            # IMPORTANT
+            # apply field limit
             line_elements[line] = elements[:field_limit]
 
             case_sensitives[line] = {}
@@ -190,10 +192,8 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
             try:
 
-                # small randomized delay
                 time.sleep(random.uniform(0.05, 0.2))
 
-                # rotate UA
                 random_ua = random.choice(USER_AGENTS)
 
                 headers = {
@@ -217,7 +217,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                     headers=headers
                 )
 
-                # ---------------- SUCCESS ----------------
                 if response.status_code == 200:
 
                     try:
@@ -226,14 +225,12 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                         last_error = "Encoding Error"
                         continue
 
-                    # ---------------- EMPTY RESPONSE ----------------
                     if not content.strip():
                         last_error = "Empty Response"
                         continue
 
                     lower_content = content.lower()
 
-                    # ---------------- HTML DETECTION ----------------
                     html_indicators = [
                         "<html",
                         "<!doctype",
@@ -252,7 +249,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                         last_error = "HTML/WAF Response"
                         continue
 
-                    # ---------------- NORMALIZE WEIRD SPACES ----------------
                     content = (
                         content
                         .replace("\u00a0", " ")
@@ -261,7 +257,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
                     return content, None
 
-                # ---------------- COMMON STATUS ERRORS ----------------
                 elif response.status_code == 403:
                     last_error = "403 Forbidden"
 
@@ -277,7 +272,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                 else:
                     last_error = f"HTTP {response.status_code}"
 
-            # ---------------- SSL ----------------
             except requests.exceptions.SSLError:
 
                 try:
@@ -332,24 +326,111 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                 except Exception as e:
                     last_error = str(e)
 
-            # ---------------- TIMEOUT ----------------
             except requests.exceptions.Timeout:
                 last_error = "Timeout"
 
-            # ---------------- CONNECTION ----------------
             except requests.exceptions.ConnectionError:
                 last_error = "Connection Failed"
 
-            # ---------------- TOO MANY REDIRECTS ----------------
             except requests.exceptions.TooManyRedirects:
                 last_error = "Redirect Loop"
 
-            # ---------------- OTHER ----------------
             except Exception as e:
                 last_error = str(e)
 
     return None, last_error
-    # ---------------- Main Checking ----------------
+
+# ---------------- Matching Function ----------------
+def check_line_in_content(content, line_elements, case_sensitives_line):
+
+    if not content:
+        return False
+
+    cleaned_lines = []
+
+    for line in content.splitlines():
+
+        line = re.split(r'\s*#', line.strip())[0].strip()
+
+        if line:
+            cleaned_lines.append(line)
+
+    # ---------------- LOOP THROUGH ADS.TXT LINES ----------------
+    for c_line in cleaned_lines:
+
+        content_parts = [
+            p.strip()
+            for p in c_line.split(",")
+        ]
+
+        # ==================================================
+        # SIMPLE SEARCH MODE
+        # ==================================================
+        if len(line_elements) == 1:
+
+            search_element = line_elements[0].strip()
+
+            if search_element.lower() == "<any>":
+                return True
+
+            is_case_sensitive = case_sensitives_line.get(
+                f"{search_element}_0",
+                False
+            )
+
+            if is_case_sensitive:
+
+                if search_element in c_line:
+                    return True
+
+            else:
+
+                if search_element.lower() in c_line.lower():
+                    return True
+
+        # ==================================================
+        # FIELD MATCH MODE
+        # ==================================================
+        else:
+
+            if len(content_parts) < len(line_elements):
+                continue
+
+            matched = True
+
+            for i, search_element in enumerate(line_elements):
+
+                search_element = search_element.strip()
+
+                content_element = content_parts[i].strip()
+
+                # wildcard support
+                if search_element.lower() == "<any>":
+                    continue
+
+                is_case_sensitive = case_sensitives_line.get(
+                    f"{search_element}_{i}",
+                    False
+                )
+
+                if is_case_sensitive:
+
+                    if search_element != content_element:
+                        matched = False
+                        break
+
+                else:
+
+                    if search_element.lower() != content_element.lower():
+                        matched = False
+                        break
+
+            if matched:
+                return True
+
+    return False
+
+# ---------------- Main Checking ----------------
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
 
     start_time = time.time()
@@ -365,7 +446,6 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
 
     status_text = st.empty()
 
-    # optimized thread count
     with ThreadPoolExecutor(max_workers=15) as executor:
 
         future_to_index = {
