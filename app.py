@@ -187,8 +187,9 @@ session = requests.Session()
 # ---------------- Fetch Function ----------------
 def fetch_with_retry(domain, max_retries=2, timeout=10):
     """
-    Fetch ads.txt using streaming to prevent truncation of large files.
-    Tries https/http and with/without www prefix.
+    Fetch ads.txt and let requests handle gzip/br decompression automatically.
+    DO NOT set Accept-Encoding or use stream+iter_content — that bypasses
+    requests' built-in auto-decompression and returns raw compressed bytes.
     """
 
     base_domains = [domain]
@@ -214,8 +215,9 @@ def fetch_with_retry(domain, max_retries=2, timeout=10):
 
                 headers = {
                     "User-Agent": random_ua,
-                    # identity = no compression, prevents partial decode truncation
-                    "Accept-Encoding": "identity",
+                    # Do NOT set Accept-Encoding here.
+                    # requests automatically sends gzip/deflate and decompresses
+                    # the response. Overriding it breaks that auto-decompression.
                     "Accept": "*/*",
                     "Accept-Language": "en-US,en;q=0.9",
                     "Connection": "keep-alive",
@@ -223,27 +225,20 @@ def fetch_with_retry(domain, max_retries=2, timeout=10):
                     "Pragma": "no-cache"
                 }
 
-                # stream=True: read the full response without a size cap
+                # Do NOT use stream=True with manual iter_content — that also
+                # bypasses auto-decompression and gives raw compressed bytes.
                 response = session.get(
                     url,
                     timeout=timeout,
                     allow_redirects=True,
-                    headers=headers,
-                    stream=True
+                    headers=headers
                 )
 
                 if response.status_code == 200:
 
                     try:
-                        # Read full content via streaming to avoid truncation
-                        raw_bytes = b""
-                        for chunk in response.iter_content(chunk_size=8192):
-                            raw_bytes += chunk
-
-                        # Detect encoding
-                        encoding = response.encoding or "utf-8"
-                        content = raw_bytes.decode(encoding, errors="replace")
-
+                        # response.text auto-decompresses and decodes correctly
+                        content = response.text
                     except Exception:
                         last_error = "Encoding Error"
                         continue
@@ -320,7 +315,6 @@ def check_line_in_content(content, all_line_elements, case_sensitives_line, fiel
     line_elements = all_line_elements[:field_limit]
 
     debug_info = []
-
     cleaned_lines = []
 
     for raw_line in content.splitlines():
@@ -391,7 +385,6 @@ def check_line_in_content(content, all_line_elements, case_sensitives_line, fiel
                 debug_info.append(f"MATCH on: {c_line}\n  " + "\n  ".join(field_debug))
                 return True, debug_info
             else:
-                # Log near-misses where first field matched
                 if field_debug and "✅" in field_debug[0]:
                     debug_info.append(f"Near-miss: {c_line}\n  " + "\n  ".join(field_debug))
 
@@ -424,6 +417,15 @@ if st.button("🔍 Run Debug") and debug_domain and debug_line:
         total_lines = len(content.splitlines())
         st.success(f"✅ Fetched — {total_lines} total lines, {len(content)} chars")
 
+        # Sanity check — warn if content looks like binary garbage
+        non_printable = sum(1 for c in content[:500] if ord(c) > 127)
+        if non_printable > 50:
+            st.error(
+                "⚠️ Content looks like binary/compressed data — "
+                "the server may be returning a corrupt or compressed response. "
+                "Check the raw lines below."
+            )
+
         # Show raw lines containing the first field keyword
         keyword = debug_line.split(",")[0].strip().lower()
         matching_raw = [l for l in content.splitlines() if keyword in l.lower()]
@@ -434,9 +436,9 @@ if st.button("🔍 Run Debug") and debug_domain and debug_line:
                 st.code(repr(l), language="text")
         else:
             st.warning(
-                f"❌ No lines containing '{keyword}' found in the fetched content.\n\n"
-                f"The file only has {total_lines} lines — the real file may have more. "
-                f"This usually means the server returned a truncated or cached version."
+                f"❌ No lines containing '{keyword}' found.\n\n"
+                f"File has {total_lines} lines. "
+                f"If this seems low, the server may be returning a partial or cached response."
             )
 
         # Parse and show search elements
@@ -459,13 +461,11 @@ if st.button("🔍 Run Debug") and debug_domain and debug_line:
             st.error("❌ Result: NO — No match")
 
         if debug_info:
-            st.markdown("**Debug trace (matches + near-misses):**")
+            st.markdown("**Debug trace:**")
             for info in debug_info:
                 st.code(info, language="text")
-        else:
-            st.warning("No near-misses either — the keyword does not exist in the fetched content.")
 
-        # Show first 20 and last 20 lines to spot truncation
+        # First and last 20 lines
         all_lines = content.splitlines()
         with st.expander("📄 First 20 lines of fetched content"):
             for l in all_lines[:20]:
