@@ -198,16 +198,11 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
                 headers = {
                     "User-Agent": random_ua,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Accept": "*/*",
                     "Accept-Language": "en-US,en;q=0.9",
-                    "Accept-Encoding": "gzip, deflate, br",
                     "Connection": "keep-alive",
-                    "Upgrade-Insecure-Requests": "1",
-                    "Cache-Control": "max-age=0",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-User": "?1",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache"
                 }
 
                 response = session.get(
@@ -229,31 +224,25 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
                         last_error = "Empty Response"
                         continue
 
-                    lower_content = content.lower()
-
-                    html_indicators = [
-                        "<html",
-                        "<!doctype",
-                        "<head>",
-                        "<body>",
-                        "cloudflare",
-                        "cf-browser-verification",
-                        "access denied",
-                        "captcha",
-                        "akamai",
-                        "imperva",
-                        "datadome"
-                    ]
-
-                    if any(indicator in lower_content for indicator in html_indicators):
-                        last_error = "HTML/WAF Response"
-                        continue
-
+                    # normalize weird spaces
                     content = (
                         content
                         .replace("\u00a0", " ")
                         .replace("\t", " ")
+                        .replace("\r", "")
                     )
+
+                    lower_content = content.lower()
+
+                    # detect REAL html pages only
+                    if (
+                        "<html" in lower_content or
+                        "<!doctype html" in lower_content or
+                        "<head>" in lower_content or
+                        "<body>" in lower_content
+                    ):
+                        last_error = "HTML/WAF Response"
+                        continue
 
                     return content, None
 
@@ -271,60 +260,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=5):
 
                 else:
                     last_error = f"HTTP {response.status_code}"
-
-            except requests.exceptions.SSLError:
-
-                try:
-
-                    response = session.get(
-                        url,
-                        timeout=timeout,
-                        allow_redirects=True,
-                        verify=False,
-                        headers=headers
-                    )
-
-                    if response.status_code == 200:
-
-                        content = response.text
-
-                        if not content.strip():
-                            last_error = "Empty Response"
-                            continue
-
-                        lower_content = content.lower()
-
-                        html_indicators = [
-                            "<html",
-                            "<!doctype",
-                            "<head>",
-                            "<body>",
-                            "cloudflare",
-                            "cf-browser-verification",
-                            "access denied",
-                            "captcha",
-                            "akamai",
-                            "imperva",
-                            "datadome"
-                        ]
-
-                        if any(indicator in lower_content for indicator in html_indicators):
-                            last_error = "HTML/WAF Response"
-                            continue
-
-                        content = (
-                            content
-                            .replace("\u00a0", " ")
-                            .replace("\t", " ")
-                        )
-
-                        return content, None
-
-                    else:
-                        last_error = f"HTTP {response.status_code}"
-
-                except Exception as e:
-                    last_error = str(e)
 
             except requests.exceptions.Timeout:
                 last_error = "Timeout"
@@ -355,8 +290,10 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         if line:
             cleaned_lines.append(line)
 
-    # ---------------- LOOP THROUGH ADS.TXT LINES ----------------
     for c_line in cleaned_lines:
+
+        # normalize spaces
+        c_line = re.sub(r'\s+', ' ', c_line.strip())
 
         content_parts = [
             p.strip()
@@ -368,7 +305,11 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
         # ==================================================
         if len(line_elements) == 1:
 
-            search_element = line_elements[0].strip()
+            search_element = re.sub(
+                r'\s+',
+                ' ',
+                line_elements[0].strip()
+            )
 
             if search_element.lower() == "<any>":
                 return True
@@ -400,9 +341,17 @@ def check_line_in_content(content, line_elements, case_sensitives_line):
 
             for i, search_element in enumerate(line_elements):
 
-                search_element = search_element.strip()
+                search_element = re.sub(
+                    r'\s+',
+                    ' ',
+                    search_element.strip()
+                )
 
-                content_element = content_parts[i].strip()
+                content_element = re.sub(
+                    r'\s+',
+                    ' ',
+                    content_parts[i].strip()
+                )
 
                 # wildcard support
                 if search_element.lower() == "<any>":
