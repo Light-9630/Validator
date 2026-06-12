@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -255,18 +254,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=10):
                     continue  # Retry the identical URL again
 
                 if response.status_code == 200:
-                    # --- Redirect Domain Validation Logic ---
-                    # Verify if the terminal landing url matches target domain parameters
-                    final_url = response.url
-                    parsed_final = urlparse(final_url).netloc.lower()
-                    final_clean = RE_WWW.sub('', parsed_final).split(':')[0]
-                    
-                    # Accept exact root domain matches or structural subdomains
-                    # e.g., 'app.domain.com', 'm.domain.com' are fine, 'hijacked.com' is not
-                    if final_clean != domain and not final_clean.endswith(f".{domain}"):
-                        last_error = f"Redirected to wrong domain: {final_clean}"
-                        break # Break out of the attempt loop, skip to next URL scheme variant
-
                     try:
                         content = response.text
                     except Exception:
@@ -298,8 +285,15 @@ def fetch_with_retry(domain, max_retries=2, timeout=10):
                         break
 
                     # Successfully verified and parsed, return content immediately
-                    return content, None
+                    redirected = "Yes" if response.url != url else "No"
 
+                    return (
+                        content,
+                        None,
+                        str(response.status_code),
+                        redirected,
+                        response.url
+                    )
                 elif response.status_code == 403:
                     last_error = "403 Blocked (WAF)"
                     break # Skip trying attempts, proceed to next URL option
@@ -336,7 +330,13 @@ def fetch_with_retry(domain, max_retries=2, timeout=10):
                 last_error = str(e)
                 break
 
-    return None, last_error
+    return (
+    None,
+    last_error,
+    last_error,
+    "No",
+    ""
+)
 
 
 # ---------------- Strip Comment ----------------
@@ -431,12 +431,15 @@ st.markdown("---")
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     start_time = time.time()
 
-    results = {"Page": domains}
+    results = {
+    "Page": domains,
+    "HTTP Status": [""] * len(domains),
+    "Redirected": [""] * len(domains),
+    "Final URL": [""] * len(domains)
+}
 
     for line in lines:
         results[line] = [""] * len(domains)
-
-    errors = {}
 
     progress_bar = st.progress(0)
     status_text  = st.empty()
@@ -452,12 +455,14 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
             domain = domains[idx]
 
             try:
-                content, err = future.result()
+                content, err, http_status, redirected, final_url = future.result()
+                results["HTTP Status"][idx] = http_status
+                results["Redirected"][idx] = redirected
+                results["Final URL"][idx] = final_url
             except Exception as e:
                 content, err = None, str(e)
 
             if err:
-                errors[domain] = err
                 for line in lines:
                     results[line][idx] = "Error"
             else:
@@ -488,12 +493,3 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
         file_name="ads_txt_check_results.csv",
         mime="text/csv"
     )
-
-    # ---------------- Errors ----------------
-    if errors:
-        st.subheader("⚠️ Errors")
-        error_df = pd.DataFrame({
-            "Page":  list(errors.keys()),
-            "Error": list(errors.values())
-        })
-        st.dataframe(error_df, use_container_width=True)
