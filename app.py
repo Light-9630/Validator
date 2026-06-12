@@ -460,7 +460,11 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
                 results["Redirected"][idx] = redirected
                 results["Final URL"][idx] = final_url
             except Exception as e:
-                content, err = None, str(e)
+                content = None
+                err = str(e)
+                http_status = "Exception"
+                redirected = "No"
+                final_url = ""
 
             if err:
                 for line in lines:
