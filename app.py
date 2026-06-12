@@ -273,17 +273,6 @@ def fetch_with_retry(domain, max_retries=2, timeout=10):
                     )
 
                     lower_content = content.lower()
-
-                    # Reject HTML/WAF pages
-                    if (
-                        "<html" in lower_content or
-                        "<!doctype html" in lower_content or
-                        "<head>" in lower_content or
-                        "<body>" in lower_content
-                    ):
-                        last_error = "HTML/WAF Response"
-                        break
-
                     # Successfully verified and parsed, return content immediately
                     redirected = "Yes" if response.url != url else "No"
 
