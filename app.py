@@ -11,6 +11,31 @@ import random
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
 st.title("Ads.txt Validator")
 
+# ---------------- Domain Normalizer ----------------
+def normalize_domain(raw: str) -> str:
+    """
+    Accepts any of:
+      xyz.com, www.xyz.com, https://xyz.com, https://xyz.com/,
+      https://www.xyz.com/, xyz.com/app-ads.txt,
+      https://xyz.com/app-ads.txt, http://www.xyz.com/ads.txt
+    Returns:
+      xyz.com  (no scheme, no www, no path, lowercase, stripped)
+    """
+    d = raw.strip()
+    if not d:
+        return ""
+    # Remove scheme (http:// or https://)
+    d = re.sub(r'^https?://', '', d, flags=re.IGNORECASE)
+    # Remove everything after first slash (path, query, fragment)
+    d = d.split("/")[0]
+    # Remove port if present
+    d = d.split(":")[0]
+    # Strip leading www.
+    d = re.sub(r'^www\.', '', d, flags=re.IGNORECASE)
+    # Lowercase and strip whitespace
+    d = d.lower().strip()
+    return d
+
 # ---------------- Input Tabs ----------------
 tab1, tab2 = st.tabs(["📋 Paste Domains", "📂 Upload Domains File"])
 
@@ -30,10 +55,12 @@ with tab1:
     if domain_input:
 
         domains = [
-            d.strip()
+            normalize_domain(d)
             for d in domain_input.splitlines()
             if d.strip()
         ]
+        # Remove empty strings produced by blank lines
+        domains = [d for d in domains if d]
 
 with tab2:
 
@@ -51,10 +78,12 @@ with tab2:
         )
 
         uploaded_domains = [
-            line.strip()
+            normalize_domain(line)
             for line in stringio.readlines()
             if line.strip()
         ]
+        # Remove empty strings produced by blank lines
+        uploaded_domains = [d for d in uploaded_domains if d]
 
         domains.extend(uploaded_domains)
 
