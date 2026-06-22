@@ -216,16 +216,16 @@ if lines:
                         )
 
         # ---- Live debug preview of parsed elements ----
-        st.markdown("---")
-        st.markdown("**🔬 Parsed Search Elements (live)**")
-        for line, elems in line_elements.items():
-            sliced = elems[:field_limit]
-            st.code(
-                f"Line     : {repr(line)}\n"
-                f"All elems: {elems}\n"
-                f"After field_limit={field_limit}: {sliced}",
-                language="text"
-            )
+        # st.markdown("---")
+        # st.markdown("**🔬 Parsed Search Elements (live)**")
+        # for line, elems in line_elements.items():
+        #     sliced = elems[:field_limit]
+        #     st.code(
+        #         f"Line     : {repr(line)}\n"
+        #         f"All elems: {elems}\n"
+        #         f"After field_limit={field_limit}: {sliced}",
+        #         language="text"
+        #     )
 
 # ---------------- User Agent Pool ----------------
 USER_AGENTS = [
