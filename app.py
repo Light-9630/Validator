@@ -426,11 +426,11 @@ st.markdown("---")
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     start_time = time.time()
     if pairwise_mode and len(domains) != len(lines):
-    st.error(
-        f"Pairwise mode requires equal counts.\n"
-        f"Domains: {len(domains)} | Lines: {len(lines)}"
-    )
-    st.stop()
+        st.error(
+            f"Pairwise mode requires equal counts.\n"
+            f"Domains: {len(domains)} | Lines: {len(lines)}"
+        )
+        st.stop()
     if pairwise_mode:
 
         results = {
