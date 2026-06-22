@@ -416,19 +416,43 @@ def check_line_in_content(content, all_line_elements, case_sensitives_line, fiel
     return False, debug_info
 
 # ---------------- Main Checking ----------------
+pairwise_mode = st.checkbox(
+    "Pair Domains and Lines (1st domain ↔ 1st line)",
+    value=False
+)
+
+
 st.markdown("---")
 if st.button("🚀 Start Checking", disabled=not (domains and lines)):
     start_time = time.time()
+    if pairwise_mode and len(domains) != len(lines):
+    st.error(
+        f"Pairwise mode requires equal counts.\n"
+        f"Domains: {len(domains)} | Lines: {len(lines)}"
+    )
+    st.stop()
+    if pairwise_mode:
 
-    results = {
-    "Page": domains,
-    "HTTP Status": [""] * len(domains),
-    "Redirected": [""] * len(domains),
-    "Final URL": [""] * len(domains)
-}
+        results = {
+            "Page": domains,
+            "Search Line": lines,
+            "Result": [""] * len(domains),
+            "HTTP Status": [""] * len(domains),
+            "Redirected": [""] * len(domains),
+            "Final URL": [""] * len(domains)
+        }
 
-    for line in lines:
-        results[line] = [""] * len(domains)
+    else:
+
+        results = {
+            "Page": domains,
+            "HTTP Status": [""] * len(domains),
+            "Redirected": [""] * len(domains),
+            "Final URL": [""] * len(domains)
+        }
+    
+        for line in lines:
+            results[line] = [""] * len(domains)
 
     progress_bar = st.progress(0)
     status_text  = st.empty()
@@ -456,17 +480,41 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
                 final_url = ""
 
             if err:
-                for line in lines:
-                    results[line][idx] = "Error"
+
+                if pairwise_mode:
+                    results["Result"][idx] = "Error"
+            
+                else:
+                    for line in lines:
+                        results[line][idx] = "Error"
+            
             else:
-                for line in lines:
+            
+                if pairwise_mode:
+            
+                    line = lines[idx]
+            
                     found, _ = check_line_in_content(
                         content,
                         line_elements[line],
                         case_sensitives[line],
                         field_limit
                     )
-                    results[line][idx] = "Yes" if found else "No"
+            
+                    results["Result"][idx] = "Yes" if found else "No"
+            
+                else:
+            
+                    for line in lines:
+            
+                        found, _ = check_line_in_content(
+                            content,
+                            line_elements[line],
+                            case_sensitives[line],
+                            field_limit
+                        )
+            
+                        results[line][idx] = "Yes" if found else "No"
 
             progress_bar.progress(processed / len(domains))
             status_text.text(f"Processed {processed}/{len(domains)} domains...")
