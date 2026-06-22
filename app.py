@@ -7,6 +7,7 @@ from io import StringIO
 import re
 import random
 from urllib.parse import urlparse
+from collections import Counter
 
 # ---------------- Page Setup ----------------
 st.set_page_config(page_title="Ads.txt / App-ads.txt Bulk Checker", layout="wide")
@@ -135,11 +136,55 @@ lines = [
     if l.strip()
 ]
 
+line_counter = Counter(lines)
+
+duplicate_lines = {
+    line: count
+    for line, count in line_counter.items()
+    if count > 1
+}
+
+
+
 case_sensitives = {}
 line_elements = {}
 
+unique_lines = []
+seen = {}
+
+for line in lines:
+
+    if line not in seen:
+        seen[line] = 1
+        unique_lines.append(line)
+
+    else:
+        seen[line] += 1
+        unique_lines.append(
+            f"{line} [Duplicate #{seen[line]}]"
+        )
+
 if lines:
-    with st.expander("⚙ Line Settings", expanded=True):
+    
+        if duplicate_lines:
+    
+            st.warning(
+                f"⚠ Found {len(duplicate_lines)} duplicate search lines."
+            )
+    
+            dup_df = pd.DataFrame(
+                {
+                    "Line": list(duplicate_lines.keys()),
+                    "Count": list(duplicate_lines.values())
+                }
+            )
+    
+            st.dataframe(
+                dup_df,
+                use_container_width=True
+            )
+    
+        with st.expander("⚙ Line Settings", expanded=True):
         select_all_case = st.checkbox(
             "Select all elements as case-sensitive",
             value=False
@@ -451,8 +496,8 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
             "Final URL": [""] * len(domains)
         }
     
-        for line in lines:
-            results[line] = [""] * len(domains)
+        for unique_line in unique_lines:
+            results[unique_line] = [""] * len(domains)
 
     progress_bar = st.progress(0)
     status_text  = st.empty()
@@ -485,8 +530,8 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
                     results["Result"][idx] = "Error"
             
                 else:
-                    for line in lines:
-                        results[line][idx] = "Error"
+                    for unique_line in unique_lines:
+                        results[unique_line][idx] = "Error"
             
             else:
             
@@ -505,16 +550,16 @@ if st.button("🚀 Start Checking", disabled=not (domains and lines)):
             
                 else:
             
-                    for line in lines:
-            
+                    for line, unique_line in zip(lines, unique_lines):
+
                         found, _ = check_line_in_content(
                             content,
                             line_elements[line],
                             case_sensitives[line],
                             field_limit
                         )
-            
-                        results[line][idx] = "Yes" if found else "No"
+                    
+                        results[unique_line][idx] = "Yes" if found else "No"
 
             progress_bar.progress(processed / len(domains))
             status_text.text(f"Processed {processed}/{len(domains)} domains...")
