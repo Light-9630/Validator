@@ -185,34 +185,34 @@ if lines:
             )
     
         with st.expander("⚙ Line Settings", expanded=True):
-        select_all_case = st.checkbox(
-            "Select all elements as case-sensitive",
-            value=False
-        )
-
-        for line in lines:
-            if "," in line:
-                elements = [e.strip() for e in line.split(",")]
-            else:
-                elements = [line]
-
-            # Store ALL elements — field_limit applied at match time only
-            line_elements[line] = elements
-            case_sensitives[line] = {}
-
-            st.markdown(f"**Line: `{line}`**")
-
-            display_elements = elements[:field_limit]
-            cols = st.columns(len(display_elements))
-
-            for i, element in enumerate(display_elements):
-                with cols[i]:
-                    unique_key = f"case_{line}_{element}_{i}"
-                    case_sensitives[line][f"{element}_{i}"] = st.checkbox(
-                        element,
-                        value=select_all_case,
-                        key=unique_key
-                    )
+            select_all_case = st.checkbox(
+                "Select all elements as case-sensitive",
+                value=False
+            )
+    
+            for line in lines:
+                if "," in line:
+                    elements = [e.strip() for e in line.split(",")]
+                else:
+                    elements = [line]
+    
+                # Store ALL elements — field_limit applied at match time only
+                line_elements[line] = elements
+                case_sensitives[line] = {}
+    
+                st.markdown(f"**Line: `{line}`**")
+    
+                display_elements = elements[:field_limit]
+                cols = st.columns(len(display_elements))
+    
+                for i, element in enumerate(display_elements):
+                    with cols[i]:
+                        unique_key = f"case_{line}_{element}_{i}"
+                        case_sensitives[line][f"{element}_{i}"] = st.checkbox(
+                            element,
+                            value=select_all_case,
+                            key=unique_key
+                        )
 
         # ---- Live debug preview of parsed elements ----
         st.markdown("---")
