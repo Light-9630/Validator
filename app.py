@@ -190,24 +190,25 @@ if lines:
                 value=False
             )
     
-            for line in lines:
+            for line_idx, line in enumerate(lines):
+
                 if "," in line:
                     elements = [e.strip() for e in line.split(",")]
                 else:
                     elements = [line]
-    
-                # Store ALL elements — field_limit applied at match time only
+            
                 line_elements[line] = elements
                 case_sensitives[line] = {}
-    
+            
                 st.markdown(f"**Line: `{line}`**")
-    
+            
                 display_elements = elements[:field_limit]
                 cols = st.columns(len(display_elements))
-    
+            
                 for i, element in enumerate(display_elements):
                     with cols[i]:
-                        unique_key = f"case_{line}_{element}_{i}"
+                        unique_key = f"case_{line_idx}_{line}_{element}_{i}"
+            
                         case_sensitives[line][f"{element}_{i}"] = st.checkbox(
                             element,
                             value=select_all_case,
